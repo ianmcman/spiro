@@ -217,6 +217,7 @@ body:not(.open) .fab { display: block; }
         <div class="widget-header">Name</div>
         <div class="card">
           <label class="field"><span>Name or text</span><input type="text" class="text" id="text" maxlength="40" autocomplete="off" spellcheck="false" placeholder="e.g. Ada, 12 May 2026"></label>
+          <label class="row" id="row-circles"><span class="lab">Circles</span><output id="o-circles"></output><input type="range" id="circles" min="0" max="100" step="1"></label>
           <p class="note">Press Play and a chain of rotating circles writes it out: a Fourier series of the letter outlines.</p>
         </div>
       </section>
@@ -458,7 +459,7 @@ const P = {
   ringShape: 'circle', wheelShape: 'circle', side: 'inside',
   ring: 80, wheel: 35, pen: 80, angle: 0,
   rot: 0, ink: 'cycle', hue: 0, weight: 1.2, speed: 1, showWheels: false,
-  sizing: 'pct', ringTeeth: 96, wheelTeeth: 52, text: ''
+  sizing: 'pct', ringTeeth: 96, wheelTeeth: 52, text: '', circles: 2000
 };
 const DEFAULTS = Object.assign({}, P);
 // Tooth counts from the classic Spirograph kit: two inner rings (96, 105), two outer (144, 150), and the wheels.
@@ -466,7 +467,7 @@ const RING_TEETH = [96, 105, 144, 150];
 const WHEEL_TEETH = [24, 30, 32, 36, 40, 42, 45, 48, 50, 52, 56, 60, 63, 64, 72, 75, 80, 84];
 let vw = 0, vh = 0, dpr = 1;
 let model = null, N = 0, drawn = 0, paused = true, dragging = false;   // nothing draws until Play or Draw
-let needRebuild = false, needRepaint = false, raf = 0;
+let needRebuild = false, needRepaint = false, needCircles = false, raf = 0;
 
 const $ = (id) => document.getElementById(id);
 const view = $('view'), vctx = view.getContext('2d');
@@ -683,13 +684,19 @@ function nameTerms(text) {
 
 // Same shape as a spirograph model where the rest of the app looks (xs, ys, N, cx, cy, dir, clo.k),
 // plus up[i]: the segment arriving at sample i is pen-up.
+// Circles slider: 0..100 on a log scale from 2 to 2000 circles, so the low counts get most of the travel.
+const circlesOf = (v) => Math.round(2 * Math.pow(1000, v / 100));
+const sliderOf = (n) => Math.round(100 * Math.log(n / 2) / Math.log(1000));
+
 function buildName(p, w, h, maxN) {
   const T = nameTerms(p.text.trim());
   if (!T) return buildModel(Object.assign({}, p, { text: '' }), w, h, maxN);
   const N = Math.min(maxN, NAME_N), sc = Math.min(0.9 * w / T.bw, 0.55 * h / T.bh);
   const m = { p, fourier: true, T, sc, N, done: N + 1, cx: w / 2, cy: h / 2, dir: 1, clo: { k: 1 },
     xs: new Float32Array(N + 1), ys: new Float32Array(N + 1), up: new Uint8Array(N + 1) };
-  const K = T.fr.length, zr = Float64Array.from(T.cr), zi = Float64Array.from(T.ci), sr = new Float64Array(K), si = new Float64Array(K);
+  const K = Math.min(T.fr.length, p.circles || T.fr.length);   // the biggest K circles
+  m.K = K;
+  const zr = Float64Array.from(T.cr), zi = Float64Array.from(T.ci), sr = new Float64Array(K), si = new Float64Array(K);
   for (let k = 0; k < K; k++) { sr[k] = Math.cos(TAU * T.fr[k] / N); si[k] = Math.sin(TAU * T.fr[k] / N); }
   for (let i = 0; i < N; i++) {
     let x = T.c0r, y = T.c0i;
@@ -710,7 +717,7 @@ function drawEpicycles(ctx, m, i) {
   let x = m.cx + (T.c0r - T.mx) * sc, y = m.cy + (T.c0i - T.my) * sc;
   const circles = new Path2D(), arms = new Path2D();
   arms.moveTo(x, y);
-  for (let k = 0; k < T.fr.length; k++) {
+  for (let k = 0; k < m.K; k++) {
     const c = Math.cos(T.fr[k] * t), s = Math.sin(T.fr[k] * t);
     const dx = (T.cr[k] * c - T.ci[k] * s) * sc, dy = (T.cr[k] * s + T.ci[k] * c) * sc, r = Math.hypot(dx, dy);
     if (r > 0.75) { circles.moveTo(x + r, y); circles.arc(x, y, r, 0, TAU); }
@@ -886,6 +893,10 @@ function tick() {
   raf = 0;
   if (!vw) return;
   if (needRebuild) { needRebuild = false; rebuild(); }
+  if (needCircles) {                                   // same samples, fewer or more circles: keep progress and replay
+    needCircles = false;
+    if (model && model.fourier) { model = buildModel(P); needRepaint = true; updateReadout(); }
+  }
   if (needRepaint) { needRepaint = false; repaintTrace(); }
   if (model && !paused && drawn < N) advance();
   render();
@@ -936,6 +947,8 @@ function syncUI() {
   $('wheelShape').value = P.wheelShape;
   $('showWheels').checked = P.showWheels;
   $('text').value = P.text;
+  $('circles').value = sliderOf(P.circles);
+  syncCircles();
   $('q-wheels').setAttribute('aria-pressed', String(P.showWheels));
   $('q-speed').textContent = SLIDERS.speed.fmt(P.speed);
   document.querySelectorAll('#side button').forEach((b) => b.setAttribute('aria-checked', String(b.dataset.side === P.side)));
@@ -952,10 +965,16 @@ function syncUI() {
   $('row-hue').classList.toggle('dim', P.ink !== 'cycle');
 }
 
+function syncCircles() {
+  $('o-circles').textContent = model && model.fourier ? model.K : P.circles;
+  $('row-circles').classList.toggle('dim', !P.text.trim());
+}
+
 function updateReadout() {
+  syncCircles();
   $('r-layers').textContent = layers.length ? layers.length + ' kept' : 'none';
   if (model.fourier) {
-    $('r-closure').textContent = model.T.fr.length + ' circles';
+    $('r-closure').textContent = model.K + ' of ' + model.T.fr.length + ' circles';
     $('r-exact').textContent = 'Fourier series'; $('r-exact').className = '';
     $('r-ratio').textContent = '-';
     return;
@@ -1039,7 +1058,7 @@ function paintGallery() {
 
 /* ------------------------------------------------------------- URL state */
 // Settings live in the URL hash, so a reload keeps them and a copied link reproduces the pattern.
-const KEYS = ['ringShape', 'wheelShape', 'side', 'ring', 'wheel', 'pen', 'angle', 'rot', 'ink', 'hue', 'weight', 'speed', 'showWheels', 'sizing', 'ringTeeth', 'wheelTeeth', 'text'];
+const KEYS = ['ringShape', 'wheelShape', 'side', 'ring', 'wheel', 'pen', 'angle', 'rot', 'ink', 'hue', 'weight', 'speed', 'showWheels', 'sizing', 'ringTeeth', 'wheelTeeth', 'text', 'circles'];
 // Validated copy of settings from untrusted text (URL). get(k) returns the string for key k, or null.
 function applyParams(t, get, keys) {
   for (const k of keys) {
@@ -1051,6 +1070,7 @@ function applyParams(t, get, keys) {
     else if (k === 'ink') { if (Object.prototype.hasOwnProperty.call(INKS, v)) t.ink = v; }
     else if (k === 'showWheels') t.showWheels = v === '1';
     else if (k === 'text') t.text = v.slice(0, 40);
+    else if (k === 'circles') { const n = parseInt(v, 10); if (n >= 2) t.circles = Math.min(2000, n); }
     else if (k === 'ringTeeth' || k === 'wheelTeeth') {
       const n = parseInt(v, 10);
       if ((k === 'ringTeeth' ? RING_TEETH : WHEEL_TEETH).includes(n)) t[k] = n;
@@ -1062,8 +1082,8 @@ function applyParams(t, get, keys) {
   return t;
 }
 // Kept layers go in one 'layers' key: layers separated by '~', fields by ',' in LAYER_KEYS order.
-const LAYER_KEYS = ['ringShape', 'wheelShape', 'side', 'ring', 'wheel', 'pen', 'angle', 'rot', 'ink', 'hue', 'weight', 'sizing', 'ringTeeth', 'wheelTeeth', 'text'];
-// text is the last field; escaped so its commas and tildes can't split fields or layers
+const LAYER_KEYS = ['ringShape', 'wheelShape', 'side', 'ring', 'wheel', 'pen', 'angle', 'rot', 'ink', 'hue', 'weight', 'sizing', 'ringTeeth', 'wheelTeeth', 'text', 'circles'];
+// text is escaped so its commas and tildes can't split fields or layers
 const encText = (t) => encodeURIComponent(t).replace(/~/g, '%7E');
 const decText = (t) => { try { return decodeURIComponent(t); } catch (_) { return ''; } };
 const MAX_LAYERS = 24;
@@ -1073,7 +1093,7 @@ function loadState() {
   const enc = q.get('layers');
   if (enc) {
     layers = enc.split('~').map((str) => str.split(','))
-      .filter((f) => f.length === LAYER_KEYS.length || f.length === LAYER_KEYS.length - 1)   // older links have no text field; drop anything else
+      .filter((f) => f.length >= LAYER_KEYS.length - 2 && f.length <= LAYER_KEYS.length)   // older links lack text and circles; drop anything else
       .slice(0, MAX_LAYERS)
       .map((f) => ({ p: applyParams(Object.assign({}, DEFAULTS), (k) => { const v = f[LAYER_KEYS.indexOf(k)]; return k === 'text' && v ? decText(v) : v; }, LAYER_KEYS) }));
   }
@@ -1178,6 +1198,12 @@ function init() {
   $('draw').addEventListener('click', () => { geometryChanged(true); paused = false; });
   $('q-play').addEventListener('click', togglePlay);
   $('shuffle').addEventListener('click', shuffle);
+  $('circles').addEventListener('input', () => {
+    P.circles = circlesOf(parseFloat($('circles').value));
+    needCircles = true;
+    syncCircles();
+    schedule();
+  });
   let textTimer = 0;
   $('text').addEventListener('input', () => {
     clearTimeout(textTimer);
