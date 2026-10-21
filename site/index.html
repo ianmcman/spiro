@@ -150,7 +150,7 @@ body:not(.open) .fab { display: block; }
 .quick output { min-width: 52px; text-align: center; color: var(--text-hi); font-variant-numeric: tabular-nums; }
 
 /* phones: bottom sheet */
-@media (max-width: 639px), (orientation: landscape) and (max-height: 499px) {
+@media (max-width: 639px), (orientation: landscape) and (max-height: 499px) and (min-width: 640px) {
   .app { display: block; }
   .stage { position: absolute; inset: 0; }
   .panel {
@@ -162,8 +162,9 @@ body:not(.open) .fab { display: block; }
   body:not(.open) .panel { display: flex; }
   body.open .panel { transform: translateY(0); visibility: visible; transition: transform .25s ease-out, visibility 0s; }
 }
-/* landscape phones: left side panel */
-@media (orientation: landscape) and (max-height: 499px) {
+/* landscape phones: left side panel. The 640px minimum keeps a portrait phone with the keyboard up (short and
+   briefly "landscape") on the bottom sheet. */
+@media (orientation: landscape) and (max-height: 499px) and (min-width: 640px) {
   .panel {
     top: 0; right: auto; width: min(360px, 56vw); max-height: none; padding-bottom: 0; padding-left: env(safe-area-inset-left);
     border-top: 0; border-right: 1px solid var(--card-border); border-radius: 0;
@@ -1174,7 +1175,7 @@ function saveState() {
   }, 400);
 }
 
-const PHONE_Q = '(max-width: 639px), (orientation: landscape) and (max-height: 499px)';
+const PHONE_Q = '(max-width: 639px), (orientation: landscape) and (max-height: 499px) and (min-width: 640px)';
 function setOpen(o) { document.body.classList.toggle('open', o); if (o) paintGallery(); }
 
 // Any other way of setting the pattern replaces a name.
