@@ -592,12 +592,12 @@ function fill(m, i) {
 // A name is written by epicycles: the letter outlines become one closed path (pen lifted between pieces),
 // its discrete Fourier transform gives one rotating circle per frequency, and chaining them traces the path.
 // Rasterised at a size that depends only on the text, so a name looks the same on any screen.
-const NAME_M = 1024;              // resampled path points (DFT length)
+const NAME_M = 4096;              // resampled path points (DFT length; allows up to ~4000 circles)
 const NAME_N = 12000;             // drawn samples
 const nameCache = new Map();
 function nameTerms(text) {
   if (nameCache.has(text)) return nameCache.get(text);
-  const size = Math.max(32, Math.min(96, Math.round(900 / text.length)));
+  const size = Math.max(32, Math.min(160, Math.round(1200 / text.length)));
   const font = size + "px 'JetBrains Mono', monospace";
   const cv = document.createElement('canvas'), cx = cv.getContext('2d');
   cx.font = font;
@@ -614,7 +614,7 @@ function nameTerms(text) {
   if (!n) return null;
   // Greedy nearest-neighbour walk over the edge pixels. Pixels within 1.5 px of the current one are used up,
   // so the walk follows each outline (every other pixel) instead of coming back for stragglers.
-  // ponytail: O(n^2) scan, fine at <= ~6k edge pixels; a grid lookup if text gets longer
+  // ponytail: O(n^2) scan, fine at <= ~10k edge pixels; a grid lookup if text gets longer
   const used = new Uint8Array(n), ox = [], oy = [];
   let i = 0;
   for (;;) {
@@ -636,22 +636,36 @@ function nameTerms(text) {
     seg.push(d > 3 ? Math.max(4, d * 0.6) : d);
     tot.push(tot[k] + seg[k]);
   }
+  // Smooth out the pixel staircase: average each point with up to 3 neighbours each way along the same stroke.
+  const sx = new Float64Array(L), sy = new Float64Array(L);
+  for (let k = 0; k < L; k++) {
+    let x = ox[k], y = oy[k], c = 1;
+    for (const dir of [-1, 1]) {
+      for (let st = 1, prev = k; st <= 3; st++) {
+        const q = (k + dir * st + L) % L;
+        if (Math.hypot(ox[q] - ox[prev], oy[q] - oy[prev]) > 3) break;
+        x += ox[q]; y += oy[q]; c++; prev = q;
+      }
+    }
+    sx[k] = x / c; sy[k] = y / c;
+  }
   const rx = new Float64Array(NAME_M), ry = new Float64Array(NAME_M), up = new Uint8Array(NAME_M);
   for (let j = 0, k = 0; j < NAME_M; j++) {
     const t = j / NAME_M * tot[L];
     while (k < L - 1 && tot[k + 1] < t) k++;
     const f = seg[k] ? (t - tot[k]) / seg[k] : 0, k1 = (k + 1) % L;
-    rx[j] = ox[k] + (ox[k1] - ox[k]) * f; ry[j] = oy[k] + (oy[k1] - oy[k]) * f;
+    rx[j] = sx[k] + (sx[k1] - sx[k]) * f; ry[j] = sy[k] + (sy[k1] - sy[k]) * f;
     up[j] = Math.hypot(ox[k1] - ox[k], oy[k1] - oy[k]) > 3 ? 1 : 0;
   }
   // DFT, frequencies -K..K; the DC term (the centroid) anchors the chain and is not a circle.
-  const K = Math.max(200, Math.min(400, text.length * 40)), fr = [], cr = [], ci = [];
+  const K = Math.max(500, Math.min(1000, text.length * 100)), fr = [], cr = [], ci = [];
   let c0r = 0, c0i = 0;
   for (let f = -K; f <= K; f++) {
-    let sr = 0, si = 0;
+    let sr = 0, si = 0, wr = 1, wi = 0;
+    const dr = Math.cos(-TAU * f / NAME_M), di = Math.sin(-TAU * f / NAME_M);
     for (let j = 0; j < NAME_M; j++) {
-      const ang = -TAU * f * j / NAME_M, c = Math.cos(ang), s = Math.sin(ang);
-      sr += rx[j] * c - ry[j] * s; si += rx[j] * s + ry[j] * c;
+      sr += rx[j] * wr - ry[j] * wi; si += rx[j] * wi + ry[j] * wr;
+      const t = wr * dr - wi * di; wi = wr * di + wi * dr; wr = t;   // e^(-i 2pi f j / M), one step at a time
     }
     sr /= NAME_M; si /= NAME_M;
     if (f === 0) { c0r = sr; c0i = si; } else { fr.push(f); cr.push(sr); ci.push(si); }
