@@ -59,6 +59,17 @@ body:not(.open) .panel { display: none; }
 .field > span, .note { font-size: 1.2rem; color: var(--text-sub); }
 .note { margin: 10px 0 0; }
 .ink { margin-bottom: 10px; }
+.hidden { display: none !important; }
+.seg.first { margin: 0 0 12px; }
+.teeth { margin-bottom: 8px; }
+.gallery { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.gallery button {
+  display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 6px 4px; min-width: 0;
+  background: transparent; border: 1px solid var(--field-border); border-radius: var(--radius); color: var(--text); cursor: pointer; touch-action: manipulation;
+  font-size: 1.1rem; line-height: 1.3; transition: border-color .2s, color .2s;
+}
+.gallery button:hover { border-color: var(--primary); color: var(--text-hi); }
+.gallery canvas { width: 100%; aspect-ratio: 1; display: block; }
 
 select {
   -webkit-appearance: none; appearance: none; width: 100%; min-height: 40px; padding: 0 30px 0 10px;
@@ -170,6 +181,11 @@ body:not(.open) .fab { display: block; }
 
     <div class="panel-body">
       <section class="widget">
+        <div class="widget-header">Gallery</div>
+        <div class="card"><div class="gallery" id="gallery"></div></div>
+      </section>
+
+      <section class="widget">
         <div class="widget-header">Shapes</div>
         <div class="card">
           <div class="pair">
@@ -187,8 +203,16 @@ body:not(.open) .fab { display: block; }
       <section class="widget">
         <div class="widget-header">Sizes</div>
         <div class="card">
+          <div class="seg first" id="sizing" role="radiogroup" aria-label="Size by">
+            <button type="button" role="radio" aria-checked="true" data-sizing="pct">Percent</button>
+            <button type="button" role="radio" aria-checked="false" data-sizing="teeth">Teeth</button>
+          </div>
+          <div class="pair teeth" id="teethRow">
+            <label class="field"><span>Ring teeth</span><select id="ringTeeth"></select></label>
+            <label class="field"><span>Wheel teeth</span><select id="wheelTeeth"></select></label>
+          </div>
           <label class="row"><span class="lab">Ring size</span><output id="o-ring"></output><input type="range" id="ring" min="20" max="100" step="1"></label>
-          <label class="row"><span class="lab">Wheel size</span><output id="o-wheel"></output><input type="range" id="wheel" min="5" max="100" step="1"></label>
+          <label class="row" id="row-wheel"><span class="lab">Wheel size</span><output id="o-wheel"></output><input type="range" id="wheel" min="5" max="100" step="1"></label>
           <label class="row"><span class="lab">Pen radius</span><output id="o-pen"></output><input type="range" id="pen" min="0" max="150" step="1"></label>
           <label class="row" id="row-angle"><span class="lab">Pen angle</span><output id="o-angle"></output><input type="range" id="angle" min="0" max="360" step="1"></label>
           <label class="row"><span class="lab">Rotation</span><output id="o-rot"></output><input type="range" id="rot" min="0" max="360" step="1"></label>
@@ -407,8 +431,13 @@ function closure(Pr, Pw) {
 const P = {
   ringShape: 'circle', wheelShape: 'circle', side: 'inside',
   ring: 80, wheel: 35, pen: 80, angle: 0,
-  rot: 0, ink: 'cycle', hue: 0, weight: 1.2, speed: 1, showWheels: false
+  rot: 0, ink: 'cycle', hue: 0, weight: 1.2, speed: 1, showWheels: false,
+  sizing: 'pct', ringTeeth: 96, wheelTeeth: 52
 };
+const DEFAULTS = Object.assign({}, P);
+// Tooth counts from the classic Spirograph kit: two inner rings (96, 105), two outer (144, 150), and the wheels.
+const RING_TEETH = [96, 105, 144, 150];
+const WHEEL_TEETH = [24, 30, 32, 36, 40, 42, 45, 48, 50, 52, 56, 60, 63, 64, 72, 75, 80, 84];
 let vw = 0, vh = 0, dpr = 1;
 let model = null, N = 0, drawn = 0, paused = true, dragging = false;   // nothing draws until Play or Draw
 let needRebuild = false, needRepaint = false, raf = 0;
@@ -423,10 +452,13 @@ function geometry(p, half) {
   const inside = p.side === 'inside';
   const ringR = Math.max(1, p.ring / 100 * half);
   const ring = makeCurve(p.ringShape, ringR);
+  // Teeth: the wheel's perimeter is ring perimeter * wheel teeth / ring teeth, as with meshing gears.
+  const unitP = makeCurve(p.wheelShape, 1).P;
+  const want = p.sizing === 'teeth' ? ring.P * p.wheelTeeth / p.ringTeeth / unitP : ringR * p.wheel / 100;
   // No drift: rescale the wheel so k ring laps are exactly m wheel perimeters (perimeter scales linearly).
-  const asked = ringR * Math.min(p.wheel / 100, inside ? INSIDE_CAP : 1);
+  const asked = Math.min(want, ringR * (inside ? INSIDE_CAP : 1));
   const clo = closure(ring.P, makeCurve(p.wheelShape, asked).P);
-  const snap = (clo.k * ring.P / clo.m) / makeCurve(p.wheelShape, 1).P / asked;
+  const snap = (clo.k * ring.P / clo.m) / unitP / asked;
   const wheelR = asked * snap, wheel = makeCurve(p.wheelShape, wheelR);
   clo.snap = snap - 1;
   clo.ratio = ring.P / wheel.P;
@@ -435,8 +467,8 @@ function geometry(p, half) {
 }
 
 // p is the live settings object for the current pattern, or a frozen copy for a kept layer.
-function buildModel(p) {
-  const half = Math.max(20, Math.min(vw, vh) / 2 - 6);
+function buildModel(p, w = vw, h = vh, maxN = MAX_SAMPLES) {
+  const half = Math.max(20, Math.min(w, h) / 2 - 6);
   const m = geometry(p, half);
   m.p = p;
   const { k } = m.clo;
@@ -444,11 +476,11 @@ function buildModel(p) {
   // Samples are spaced evenly in arc length + LAMBDA * |rotation at vertices|, so corners get time to pivot.
   m.lambda = m.wheelR + Math.hypot(m.penX, m.penY);
   m.tau = m.span + m.lambda * (k * m.ring.T + m.clo.m * m.wheel.T);
-  m.N = Math.min(MAX_SAMPLES, Math.max(3000, Math.round(k * 1500 * m.tau / m.span)));
+  m.N = Math.min(maxN, Math.max(Math.min(3000, maxN), Math.round(k * 1500 * m.tau / m.span)));
   m.walk = { s: 0, tau: 0, ri: 1, wi: m.inside ? 1 : 0, pend: 0, turn: 0, w: 0 };
   m.ss = new Float64Array(m.N + 1);
   m.dp = new Float32Array(m.N + 1);
-  m.cx = vw / 2; m.cy = vh / 2;
+  m.cx = w / 2; m.cy = h / 2;
   m.xs = new Float32Array(m.N + 1);
   m.ys = new Float32Array(m.N + 1);
   m.done = 0;                       // samples computed so far; fill() extends this as drawing reaches them
@@ -583,7 +615,7 @@ function paintBase() {
   for (const l of layers) strokeRange(bctx, l, 0, l.N);
 }
 function keepLayer() {
-  if (!model || !drawn) return;
+  if (!model || !drawn || layers.length >= MAX_LAYERS) return;
   const m = buildModel(Object.assign({}, P));                 // frozen copy of the settings
   fill(m, m.N);
   m.ss = m.dp = null;                                         // only the wheel overlay needs these
@@ -672,12 +704,18 @@ function render() {
 /* -------------------------------------------------------------- frame loop */
 function schedule() { if (!raf) raf = requestAnimationFrame(tick); saveState(); }
 
+let completeNext = false;          // gallery: show the picked pattern finished instead of waiting for Play
 function rebuild() {
   model = buildModel(P);
   N = model.N;
   drawn = 0;
   needRepaint = false;
   clearTrace();
+  if (completeNext) {
+    completeNext = false;
+    strokeRange(tctx, model, 0, N);
+    drawn = N;
+  }
   updateReadout();
 }
 
@@ -704,6 +742,7 @@ function resize() {
   prepCtx(tctx, dpr);
   prepCtx(bctx, dpr);
   rebuildLayers();
+  paintGallery();
   needRebuild = true;
   schedule();
 }
@@ -741,6 +780,11 @@ function syncUI() {
     : 'Epicycloid type. Wheel rolls around the outside of the ring.';
   $('row-angle').classList.toggle('dim', P.wheelShape === 'circle');
   $('ink').value = P.ink;
+  document.querySelectorAll('#sizing button').forEach((b) => b.setAttribute('aria-checked', String(b.dataset.sizing === P.sizing)));
+  $('teethRow').classList.toggle('hidden', P.sizing !== 'teeth');
+  $('row-wheel').classList.toggle('hidden', P.sizing === 'teeth');
+  $('ringTeeth').value = P.ringTeeth;
+  $('wheelTeeth').value = P.wheelTeeth;
   $('row-hue').classList.toggle('dim', P.ink !== 'cycle');
 }
 
@@ -755,22 +799,106 @@ function updateReadout() {
   $('r-ratio').textContent = c.ratio.toFixed(4) + '  (' + model.ring.P.toFixed(0) + ' / ' + model.wheel.P.toFixed(0) + ')';
 }
 
+/* ----------------------------------------------------------------- gallery */
+// Each preset is a stack of layers (bottom first); the last one becomes the live pattern.
+const T96 = { sizing: 'teeth', ringTeeth: 96 }, T105 = { sizing: 'teeth', ringTeeth: 105 }, T150 = { sizing: 'teeth', ringTeeth: 150 };
+const PRESETS = [
+  { name: 'Classic 96/52', layers: [Object.assign({ wheelTeeth: 52, pen: 80, ring: 92, ink: 'cyan' }, T96)] },
+  { name: 'Rose window', layers: [
+    Object.assign({ wheelTeeth: 40, pen: 45, ring: 92, ink: 'pink' }, T105),
+    Object.assign({ wheelTeeth: 40, pen: 75, ring: 92, ink: 'yellow' }, T105),
+    Object.assign({ wheelTeeth: 40, pen: 105, ring: 92, ink: 'cyan' }, T105)] },
+  { name: 'Epicycle', layers: [Object.assign({ side: 'outside', wheelTeeth: 30, pen: 130, ring: 55, ink: 'green' }, T96)] },
+  { name: 'Deep spiral', layers: [Object.assign({ wheelTeeth: 84, pen: 140, ring: 74, ink: 'cycle', hue: 200 }, T150)] },
+  { name: 'Hex weave', layers: [
+    Object.assign({ wheelShape: 'hexagon', wheelTeeth: 45, pen: 70, ring: 92, ink: 'white' }, T105),
+    Object.assign({ wheelShape: 'hexagon', wheelTeeth: 45, pen: 70, ring: 92, ink: 'cyan', rot: 30 }, T105)] },
+  { name: 'Triangle', layers: [Object.assign({ wheelShape: 'triangle', wheelTeeth: 40, pen: 90, ring: 92, ink: 'cycle' }, T96)] },
+  { name: 'Square dance', layers: [
+    Object.assign({ ringShape: 'square', wheelTeeth: 36, pen: 80, ring: 88, ink: 'orange' }, T96),
+    Object.assign({ ringShape: 'square', wheelTeeth: 36, pen: 80, ring: 88, ink: 'purple', rot: 45 }, T96)] },
+  { name: 'Star gear', layers: [{ ringShape: 'star', side: 'outside', wheel: 15, pen: 100, ring: 70, ink: 'cycle', hue: 60 }] },
+  { name: 'Heart', layers: [Object.assign({ ringShape: 'heart', wheelTeeth: 30, pen: 75, ring: 92, ink: 'pink' }, T96)] },
+  { name: 'Rosette lace', layers: [Object.assign({ ringShape: 'rosette', wheelShape: 'ellipse', wheelTeeth: 30, pen: 90, ring: 92, ink: 'cycle', hue: 120 }, T105)] },
+  { name: 'Burst', layers: [Object.assign({ wheelShape: 'burst', wheelTeeth: 45, pen: 60, ring: 92, ink: 'purple' }, T105)] },
+  { name: 'Squircle duo', layers: [
+    { ringShape: 'squircle', wheelShape: 'squircle', side: 'outside', wheel: 25, pen: 90, ring: 60, ink: 'yellow' },
+    { ringShape: 'squircle', wheelShape: 'squircle', side: 'outside', wheel: 25, pen: 90, ring: 60, ink: 'green', rot: 45 }] }
+];
+const presetLayers = (pr) => pr.layers.map((l) => Object.assign({}, DEFAULTS, l));
+function loadPreset(pr) {
+  const list = presetLayers(pr);
+  layers = list.slice(0, -1).map((p) => ({ p }));
+  rebuildLayers();
+  Object.assign(P, list[list.length - 1], { speed: P.speed, showWheels: P.showWheels });
+  completeNext = true;
+  syncUI();
+  geometryChanged();
+}
+function buildGallery() {
+  const g = $('gallery');
+  for (const pr of PRESETS) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.title = 'Load ' + pr.name;
+    const c = document.createElement('canvas');
+    const label = document.createElement('span');
+    label.textContent = pr.name;
+    b.append(c, label);
+    b.addEventListener('click', () => loadPreset(pr));
+    g.appendChild(b);
+  }
+}
+// Thumbnails are drawn by the same engine, at low sample counts.
+function paintGallery() {
+  const buttons = $('gallery').children;
+  PRESETS.forEach((pr, i) => {
+    const c = buttons[i].firstChild, size = Math.round(c.getBoundingClientRect().width) || 88, d = Math.min(window.devicePixelRatio || 1, 2);
+    c.width = c.height = Math.round(size * d);
+    const ctx = c.getContext('2d');
+    prepCtx(ctx, d);
+    for (const p of presetLayers(pr)) {
+      const m = buildModel(Object.assign(p, { weight: 0.7 }), size, size, 8000);
+      strokeRange(ctx, m, 0, m.N);
+    }
+  });
+}
+
 /* ------------------------------------------------------------- URL state */
 // Settings live in the URL hash, so a reload keeps them and a copied link reproduces the pattern.
-const KEYS = ['ringShape', 'wheelShape', 'side', 'ring', 'wheel', 'pen', 'angle', 'rot', 'ink', 'hue', 'weight', 'speed', 'showWheels'];
+const KEYS = ['ringShape', 'wheelShape', 'side', 'ring', 'wheel', 'pen', 'angle', 'rot', 'ink', 'hue', 'weight', 'speed', 'showWheels', 'sizing', 'ringTeeth', 'wheelTeeth'];
+// Validated copy of settings from untrusted text (URL). get(k) returns the string for key k, or null.
+function applyParams(t, get, keys) {
+  for (const k of keys) {
+    const v = get(k);
+    if (v === null || v === undefined || v === '') continue;
+    if (k === 'ringShape' || k === 'wheelShape') { if (SHAPES.includes(v)) t[k] = v; }
+    else if (k === 'side') { if (v === 'inside' || v === 'outside') t.side = v; }
+    else if (k === 'sizing') { if (v === 'pct' || v === 'teeth') t.sizing = v; }
+    else if (k === 'ink') { if (Object.prototype.hasOwnProperty.call(INKS, v)) t.ink = v; }
+    else if (k === 'showWheels') t.showWheels = v === '1';
+    else if (k === 'ringTeeth' || k === 'wheelTeeth') {
+      const n = parseInt(v, 10);
+      if ((k === 'ringTeeth' ? RING_TEETH : WHEEL_TEETH).includes(n)) t[k] = n;
+    } else {
+      const n = parseFloat(v), el = $(k);
+      if (isFinite(n)) t[k] = Math.min(parseFloat(el.max), Math.max(parseFloat(el.min), n));
+    }
+  }
+  return t;
+}
+// Kept layers go in one 'layers' key: layers separated by '~', fields by ',' in LAYER_KEYS order.
+const LAYER_KEYS = ['ringShape', 'wheelShape', 'side', 'ring', 'wheel', 'pen', 'angle', 'rot', 'ink', 'hue', 'weight', 'sizing', 'ringTeeth', 'wheelTeeth'];
+const MAX_LAYERS = 24;
 function loadState() {
   const q = new URLSearchParams(location.hash.slice(1));
-  for (const k of KEYS) {
-    const v = q.get(k);
-    if (v === null) continue;
-    if (k === 'ringShape' || k === 'wheelShape') { if (SHAPES.includes(v)) P[k] = v; }
-    else if (k === 'side') { if (v === 'inside' || v === 'outside') P.side = v; }
-    else if (k === 'ink') { if (v in INKS) P.ink = v; }
-    else if (k === 'showWheels') P.showWheels = v === '1';
-    else {
-      const n = parseFloat(v), el = $(k);
-      if (isFinite(n)) P[k] = Math.min(parseFloat(el.max), Math.max(parseFloat(el.min), n));
-    }
+  applyParams(P, (k) => q.get(k), KEYS);
+  const enc = q.get('layers');
+  if (enc) {
+    layers = enc.split('~').map((str) => str.split(','))
+      .filter((f) => f.length === LAYER_KEYS.length)          // drop malformed entries rather than guess
+      .slice(0, MAX_LAYERS)
+      .map((f) => ({ p: applyParams(Object.assign({}, DEFAULTS), (k) => f[LAYER_KEYS.indexOf(k)], LAYER_KEYS) }));
   }
 }
 let saveTimer = 0;
@@ -780,6 +908,7 @@ function saveState() {
     saveTimer = 0;
     const q = new URLSearchParams();
     for (const k of KEYS) q.set(k, k === 'showWheels' ? (P.showWheels ? '1' : '0') : String(P[k]));
+    if (layers.length) q.set('layers', layers.map((l) => LAYER_KEYS.map((k) => l.p[k]).join(',')).join('~'));
     const h = '#' + q.toString();
     if (location.hash !== h) history.replaceState(null, '', h);
   }, 400);
@@ -799,6 +928,20 @@ function togglePlay() {
 }
 
 function init() {
+  for (const [id, list] of [['ringTeeth', RING_TEETH], ['wheelTeeth', WHEEL_TEETH]]) {
+    for (const n of list) {
+      const o = document.createElement('option');
+      o.value = o.textContent = String(n);
+      $(id).appendChild(o);
+    }
+    $(id).addEventListener('change', () => { P[id] = parseInt($(id).value, 10); geometryChanged(); });
+  }
+  document.querySelectorAll('#sizing button').forEach((b) => b.addEventListener('click', () => {
+    P.sizing = b.dataset.sizing;
+    syncUI();
+    geometryChanged();
+  }));
+  buildGallery();
   for (const name in INKS) {
     const o = document.createElement('option');
     o.value = name; o.textContent = name === 'cycle' ? 'monokai cycle' : name;
@@ -857,7 +1000,7 @@ function init() {
   $('undo').addEventListener('click', undoLayer);
   $('svg').addEventListener('click', saveSVG);
 
-  // drag on the canvas to roll the wheel forward by hand (one ring lap per turn round the centre)
+  // drag around the canvas to roll the wheel by hand (one ring lap per turn round the centre); backwards erases
   let dragA = 0, dragAcc = 0;
   const angleOf = (e) => {
     const b = view.getBoundingClientRect();
@@ -875,13 +1018,18 @@ function init() {
     let da = a - dragA;
     da -= TAU * Math.round(da / TAU);
     dragA = a;
-    dragAcc = Math.max(0, dragAcc + da * model.dir * N / (TAU * model.clo.k));   // backwards does nothing
-    const n = Math.floor(dragAcc);
+    dragAcc += da * model.dir * N / (TAU * model.clo.k);
+    const n = Math.trunc(dragAcc);
+    dragAcc -= n;
     if (n > 0 && drawn < N) {
-      dragAcc -= n;
       const end = Math.min(N, drawn + n);
       strokeRange(tctx, model, drawn, end);
       drawn = end;
+    } else if (n < 0 && drawn > 0) {
+      // backwards erases: replay what is left once per frame.
+      // ponytail: full replay each frame; keep snapshot canvases if erasing lags on 250k-sample patterns
+      drawn = Math.max(0, drawn + n);
+      needRepaint = true;
     }
     schedule();
   });
@@ -892,7 +1040,7 @@ function init() {
 
   // panel: hidden on phones, open on desktop
   const phone = window.matchMedia('(max-width: 639px), (orientation: landscape) and (max-height: 499px)');
-  const setOpen = (o) => document.body.classList.toggle('open', o);
+  const setOpen = (o) => { document.body.classList.toggle('open', o); if (o) paintGallery(); };
   setOpen(!phone.matches);
   const onPhone = (e) => setOpen(!e.matches);
   if (phone.addEventListener) phone.addEventListener('change', onPhone); else phone.addListener(onPhone);
@@ -929,6 +1077,8 @@ function shuffle() {
     q.side = Math.random() < 0.5 ? 'inside' : 'outside';
     const wf = rnd(0.12, q.side === 'inside' ? 0.7 : 0.55);
     q.wheel = Math.round(wf * 100);
+    q.ringTeeth = pick(RING_TEETH);
+    q.wheelTeeth = pick(WHEEL_TEETH);
     q.pen = Math.round(rnd(30, 140));
     q.angle = Math.round(rnd(0, 360));
     let ring = rnd(40, 85);

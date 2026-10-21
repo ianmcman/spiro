@@ -2,7 +2,7 @@
 
 A single-file Spirograph generator. Plain HTML, CSS and vanilla JS. No dependencies, no build step, no server-side state.
 
-Settings are kept in the URL hash, so a reload keeps them and a copied link reproduces the pattern. Drag around the canvas to roll the wheel by hand. Keys: Space play/pause, W wheels, -/+ speed, D draw, S shuffle, K keep layer, U undo layer, C clear all. Each layer can use one solid Monokai ink or the colour cycle; Rotation turns the whole pattern, for rotated copies across layers. Save SVG writes vector paths for print or pen plotters. "Keep layer" freezes the current pattern so the next one draws on top; Save PNG renders every layer at up to 4096 px.
+Settings are kept in the URL hash, so a reload keeps them and a copied link reproduces the pattern. Drag around the canvas to roll the wheel by hand. Keys: Space play/pause, W wheels, -/+ speed, D draw, S shuffle, K keep layer, U undo layer, C clear all. Each layer can use one solid Monokai ink or the colour cycle; Rotation turns the whole pattern, for rotated copies across layers. Save SVG writes vector paths for print or pen plotters. Size by Teeth uses the classic kit's tooth counts (rings 96, 105, 144, 150; wheels 24 to 84), so patterns close the way the physical gears do. Dragging backwards erases. The Gallery loads ready-made layered patterns, and kept layers are included in the link. "Keep layer" freezes the current pattern so the next one draws on top; Save PNG renders every layer at up to 4096 px.
 
 ## Run locally
 
@@ -48,3 +48,7 @@ It prints `healthy` once `/healthz` answers. You can also `curl http://HOST:8080
 ## Font
 
 `JetBrainsMono-Regular.woff2` is JetBrains Mono, under the SIL Open Font License 1.1 (see `OFL.txt`). It is served from the container, so the page makes no third-party requests.
+
+## License
+
+MIT, see `LICENSE`. The bundled font is under its own licence, see `OFL.txt`.

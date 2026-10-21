@@ -7,3 +7,4 @@ deploy.sh
 docker-compose.yml
 OFL.txt
 .gitignore
+LICENSE
