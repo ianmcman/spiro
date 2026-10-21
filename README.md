@@ -12,13 +12,17 @@ A single-file Spirograph generator. Plain HTML, CSS and vanilla JS. No dependenc
 
 Settings are kept in the URL hash, so a reload keeps them and a copied link reproduces the pattern. Drag around the canvas to roll the wheel by hand. Keys: Space play/pause, W wheels, -/+ speed, D draw, S shuffle, K keep layer, U undo layer, C clear all. Each layer can use one solid Monokai ink or the colour cycle; Rotation turns the whole pattern, for rotated copies across layers. Save SVG writes vector paths for print or pen plotters. Size by Teeth uses the classic kit's tooth counts (rings 96, 105, 144, 150; wheels 24 to 84), so patterns close the way the physical gears do. Dragging backwards erases. The Gallery loads ready-made layered patterns, and kept layers are included in the link. "Keep layer" freezes the current pattern so the next one draws on top; Save PNG renders every layer at up to 4096 px.
 
+## Cloudflare Pages
+
+The live site is the `site/` directory published to Cloudflare Pages. `site/_headers` sets the same security headers as `nginx.conf`.
+
 ## Run locally
 
 ```sh
-python3 -m http.server 8080
+python3 -m http.server 8080 -d site
 ```
 
-Open http://localhost:8080/spirograph.html.
+Open http://localhost:8080/.
 
 ## Run on the homelab
 
@@ -55,8 +59,8 @@ It prints `healthy` once `/healthz` answers. You can also `curl http://HOST:8080
 
 ## Font
 
-`fonts/JetBrainsMono-Regular.woff2` is JetBrains Mono, under the SIL Open Font License 1.1 (see `fonts/OFL.txt`). It is served from the container, so the page makes no third-party requests.
+`site/JetBrainsMono-Regular.woff2` is JetBrains Mono, under the SIL Open Font License 1.1 (see `site/OFL.txt`). It is served with the page, so the page makes no third-party requests.
 
 ## License
 
-Copyright (c) 2026 Ian McManus. MIT, see `LICENSE`. The bundled font is under its own licence, see `fonts/OFL.txt`.
+Copyright (c) 2026 Ian McManus. MIT, see `LICENSE`. The bundled font is under its own licence, see `site/OFL.txt`.

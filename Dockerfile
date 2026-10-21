@@ -1,9 +1,8 @@
 FROM nginx:alpine
 
 COPY nginx.conf /etc/nginx/nginx.conf
-COPY spirograph.html /usr/share/nginx/html/index.html
-# JetBrains Mono (SIL OFL 1.1), same file Dynacat serves
-COPY fonts/JetBrainsMono-Regular.woff2 /usr/share/nginx/html/
+# site/ is also what Cloudflare Pages publishes (_headers is Pages-only; nginx.conf sets the same headers)
+COPY site/ /usr/share/nginx/html/
 
 USER nginx
 EXPOSE 8080
