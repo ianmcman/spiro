@@ -64,3 +64,5 @@ It prints `healthy` once `/healthz` answers. You can also `curl http://HOST:8080
 ## License
 
 Copyright (c) 2026 Ian McManus. MIT, see `LICENSE`. The bundled font is under its own licence, see `site/OFL.txt`.
+
+If you enjoy it, you can [sponsor me on GitHub](https://github.com/sponsors/ianmcman).
