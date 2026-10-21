@@ -185,6 +185,7 @@ body:not(.open) .fab { display: block; }
       <button type="button" id="q-slower" aria-label="Slower">&minus;</button>
       <output id="q-speed" aria-label="Speed"></output>
       <button type="button" id="q-faster" aria-label="Faster">+</button>
+      <button type="button" id="q-fit" class="hidden">Fit</button>
     </div>
     <p class="hint" id="hint">Press <b>Play</b> to draw, or drag around the canvas to roll the wheel by hand.</p>
   </main>
@@ -206,10 +207,12 @@ body:not(.open) .fab { display: block; }
             <button type="button" class="btn" id="undo">Undo layer</button>
             <button type="button" class="btn" id="save">Save PNG</button>
             <button type="button" class="btn" id="svg">Save SVG</button>
-            <button type="button" class="btn wide" id="clear">Clear all</button>
+            <button type="button" class="btn" id="record">Record video</button>
+            <button type="button" class="btn" id="clear">Clear all</button>
           </div>
-          <p class="note">Drag around the canvas to roll the wheel by hand.</p>
-          <p class="note keys">Space play/pause · W wheels · &minus;/+ speed · D draw · S shuffle · K keep layer · U undo layer · C clear</p>
+          <p class="note">Drag around the canvas to roll the wheel by hand. Scroll or pinch to zoom; Shift-drag or two fingers to pan.</p>
+          <p class="note">Record video restarts the drawing and saves it as a video when it finishes.</p>
+          <p class="note keys">Space play/pause · W wheels · &minus;/+ speed · D draw · S shuffle · K keep layer · U undo layer · C clear · 0 fit</p>
         </div>
       </section>
 
@@ -467,7 +470,10 @@ const RING_TEETH = [96, 105, 144, 150];
 const WHEEL_TEETH = [24, 30, 32, 36, 40, 42, 45, 48, 50, 52, 56, 60, 63, 64, 72, 75, 80, 84];
 let vw = 0, vh = 0, dpr = 1;
 let model = null, N = 0, drawn = 0, paused = true, dragging = false;   // nothing draws until Play or Draw
-let needRebuild = false, needRepaint = false, needCircles = false, raf = 0;
+let needRebuild = false, needRepaint = false, needCircles = false, needView = false, raf = 0;
+// Zoom and pan: screen = world * z + (x, y), in CSS px. Trace and layers are re-stroked at the new transform
+// (crisp at any zoom, lines keep their on-screen width); exports ignore it.
+const zoom = { z: 1, x: 0, y: 0 };
 
 const $ = (id) => document.getElementById(id);
 const view = $('view'), vctx = view.getContext('2d');
@@ -775,13 +781,13 @@ function drawEpicycles(ctx, m, i) {
     arms.lineTo(x, y);
   }
   ctx.save();
-  ctx.lineWidth = 1;
+  ctx.lineWidth = 1 / zoom.z;
   ctx.strokeStyle = 'rgba(165,167,152,0.3)';               // circles: muted text colour
   ctx.stroke(circles);
   ctx.strokeStyle = 'rgba(102,217,239,0.8)';               // arms: primary cyan
   ctx.stroke(arms);
   ctx.fillStyle = '#f92672';
-  ctx.beginPath(); ctx.arc(x, y, 3.5, 0, TAU); ctx.fill();
+  ctx.beginPath(); ctx.arc(x, y, 3.5 / zoom.z, 0, TAU); ctx.fill();
   ctx.restore();
 }
 
@@ -795,12 +801,15 @@ function strokeChunk(ctx, m, i0, i1) {
   for (let i = i0 + 1; i <= i1; i++) if (up && up[i]) ctx.moveTo(xs[i], ys[i]); else ctx.lineTo(xs[i], ys[i]);
   const c = inkRGB(m.p, i0 / m.N);
   ctx.strokeStyle = 'rgba(' + c[0] + ',' + c[1] + ',' + c[2] + ',' + INK_ALPHA + ')';
-  ctx.lineWidth = m.p.weight;
+  ctx.lineWidth = m.p.weight / (ctx.z || 1);
   ctx.stroke();
 }
 // Samples i0..i1 of pattern m, in chunks so the colour can drift along the line.
 function strokeRange(ctx, m, i0, i1) {
   for (let i = i0; i < i1; i += CHUNK) strokeChunk(ctx, m, i, Math.min(i1, i + CHUNK));
+}
+function viewTransform() {
+  for (const c of [tctx, bctx]) { c.setTransform(dpr * zoom.z, 0, 0, dpr * zoom.z, dpr * zoom.x, dpr * zoom.y); c.z = zoom.z; }
 }
 function prepCtx(ctx, scale) {
   ctx.setTransform(scale, 0, 0, scale, 0, 0);
@@ -884,7 +893,7 @@ function drawWheels(ctx) {
   const c = F.cos, s = F.sin, rx = F.rx, ry = F.ry, ox = m.cx + F.wx, oy = m.cy + F.wy;
   ctx.save();
   ctx.translate(m.cx, m.cy); ctx.transform(m.rc, m.rs, -m.rs, m.rc, 0, 0); ctx.translate(-m.cx, -m.cy);   // pattern rotation
-  ctx.lineWidth = 1.25;
+  ctx.lineWidth = 1.25 / zoom.z;
   ctx.lineJoin = 'round';
   // ring
   ctx.strokeStyle = 'rgba(165,167,152,0.35)';              // ring: muted text colour
@@ -910,20 +919,21 @@ function drawWheels(ctx) {
   ctx.strokeStyle = 'rgba(230,219,116,0.9)';               // pen arm: yellow
   ctx.beginPath(); ctx.moveTo(wx, wy); ctx.lineTo(px, py); ctx.stroke();
   ctx.fillStyle = 'rgba(102,217,239,0.9)';
-  ctx.beginPath(); ctx.arc(wx, wy, 2.5, 0, TAU); ctx.fill();
+  ctx.beginPath(); ctx.arc(wx, wy, 2.5 / zoom.z, 0, TAU); ctx.fill();
   ctx.fillStyle = 'rgba(237,238,233,0.8)';
-  ctx.beginPath(); ctx.arc(m.cx + rx, m.cy + ry, 2.5, 0, TAU); ctx.fill();
+  ctx.beginPath(); ctx.arc(m.cx + rx, m.cy + ry, 2.5 / zoom.z, 0, TAU); ctx.fill();
   ctx.fillStyle = '#f92672';
-  ctx.beginPath(); ctx.arc(px, py, 4, 0, TAU); ctx.fill();
+  ctx.beginPath(); ctx.arc(px, py, 4 / zoom.z, 0, TAU); ctx.fill();
   ctx.restore();
 }
 
 function render() {
   vctx.setTransform(1, 0, 0, 1, 0, 0);
-  vctx.clearRect(0, 0, view.width, view.height);
+  vctx.fillStyle = '#282923';                               // painted, not transparent, so recorded video has the background
+  vctx.fillRect(0, 0, view.width, view.height);
   vctx.drawImage(base, 0, 0);
   vctx.drawImage(trace, 0, 0);
-  vctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  vctx.setTransform(dpr * zoom.z, 0, 0, dpr * zoom.z, dpr * zoom.x, dpr * zoom.y);
   if (model && (P.showWheels || dragging || (model.fourier && drawn < N))) drawWheels(vctx);   // names show their circles while writing
 }
 
@@ -947,11 +957,13 @@ function tick() {
     needCircles = false;
     if (model && model.fourier) { model = buildModel(P); needRepaint = true; updateReadout(); }
   }
+  if (needView) { needView = false; viewTransform(); paintBase(); needRepaint = true; $('q-fit').classList.toggle('hidden', zoom.z === 1 && !zoom.x && !zoom.y); }
   if (needRepaint) { needRepaint = false; repaintTrace(); }
   if (model && !paused && drawn < N) advance();
   render();
   syncPlay();
-  if (model && !paused && drawn < N) schedule();
+  if (rec && drawn >= N && !recEnd) recEnd = setTimeout(() => { if (rec) rec.stop(); }, 1500);   // hold the finished picture, then save
+  if ((model && !paused && drawn < N) || rec) schedule();                                          // recording needs a frame every tick
 }
 
 /* ------------------------------------------------------------------ resize */
@@ -965,6 +977,7 @@ function resize() {
   view.height = trace.height = base.height = Math.max(1, Math.round(h * d));
   prepCtx(tctx, dpr);
   prepCtx(bctx, dpr);
+  viewTransform();
   rebuildLayers();
   paintGallery();
   needRebuild = true;
@@ -1268,17 +1281,50 @@ function init() {
 
   // drag around the canvas to roll the wheel by hand (one ring lap per turn round the centre); backwards erases
   let dragA = 0, dragAcc = 0;
+  const local = (e) => { const b = view.getBoundingClientRect(); return [e.clientX - b.left, e.clientY - b.top]; };
   const angleOf = (e) => {
-    const b = view.getBoundingClientRect();
-    return Math.atan2(e.clientY - b.top - model.cy, e.clientX - b.left - model.cx);
+    const [x, y] = local(e);
+    return Math.atan2((y - zoom.y) / zoom.z - model.cy, (x - zoom.x) / zoom.z - model.cx);
   };
+  // zoom and pan: wheel or pinch zooms about the pointer; Shift-drag, middle/right-drag or two fingers pans
+  const pts = new Map();
+  let pan = null, pinch = null;
+  const setZoom = (z, ax, ay, wx, wy) => {          // world point (wx, wy) ends up under screen point (ax, ay)
+    zoom.z = Math.min(40, Math.max(0.5, z));
+    zoom.x = ax - wx * zoom.z; zoom.y = ay - wy * zoom.z;
+    needView = true; schedule();
+  };
+  const two = () => {
+    const [a, b] = [...pts.values()];
+    return { mx: (a[0] + b[0]) / 2, my: (a[1] + b[1]) / 2, d: Math.max(1, Math.hypot(a[0] - b[0], a[1] - b[1])) };
+  };
+  view.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    const [mx, my] = local(e);
+    const k = e.deltaMode === 1 ? 0.05 : e.ctrlKey ? 0.01 : 0.0015;   // lines, trackpad pinch (ctrl), pixels
+    setZoom(zoom.z * Math.exp(-e.deltaY * k), mx, my, (mx - zoom.x) / zoom.z, (my - zoom.y) / zoom.z);
+  }, { passive: false });
+  view.addEventListener('contextmenu', (e) => e.preventDefault());
   view.addEventListener('pointerdown', (e) => {
-    if (!model || needRebuild) return;
     try { view.setPointerCapture(e.pointerId); } catch (_) { /* synthetic events have no capturable pointer */ }
+    pts.set(e.pointerId, local(e));
+    if (pts.size === 2) {                              // second finger: stop rolling, pinch instead
+      dragging = false; pan = null;
+      const t = two();
+      pinch = { z: zoom.z, d: t.d, wx: (t.mx - zoom.x) / zoom.z, wy: (t.my - zoom.y) / zoom.z };
+      schedule();
+      return;
+    }
+    if (pts.size > 2) return;
+    if (e.shiftKey || e.button === 1 || e.button === 2) { const [x, y] = local(e); pan = { x, y, zx: zoom.x, zy: zoom.y }; return; }
+    if (!model || needRebuild) return;
     dragging = true; paused = true; dragA = angleOf(e); dragAcc = 0;
     schedule();
   });
   view.addEventListener('pointermove', (e) => {
+    if (pts.has(e.pointerId)) pts.set(e.pointerId, local(e));
+    if (pinch && pts.size >= 2) { const t = two(); setZoom(pinch.z * t.d / pinch.d, t.mx, t.my, pinch.wx, pinch.wy); return; }
+    if (pan) { const [x, y] = local(e); zoom.x = pan.zx + x - pan.x; zoom.y = pan.zy + y - pan.y; needView = true; schedule(); return; }
     if (!dragging) return;
     const a = angleOf(e);
     let da = a - dragA;
@@ -1299,9 +1345,18 @@ function init() {
     }
     schedule();
   });
-  const endDrag = () => { if (dragging) { dragging = false; schedule(); } };
+  const endDrag = (e) => {
+    pts.delete(e.pointerId);
+    if (pts.size < 2) pinch = null;
+    if (!pts.size) pan = null;
+    if (dragging) { dragging = false; schedule(); }
+  };
   view.addEventListener('pointerup', endDrag);
   view.addEventListener('pointercancel', endDrag);
+  const fit = () => { zoom.z = 1; zoom.x = zoom.y = 0; needView = true; schedule(); };
+  $('q-fit').addEventListener('click', fit);
+  if (!window.MediaRecorder || !view.captureStream) { $('record').disabled = true; $('record').title = 'This browser cannot record the canvas'; }
+  $('record').addEventListener('click', toggleRecord);
   $('save').addEventListener('click', savePNG);
 
   // panel: hidden on phones, open on desktop
@@ -1318,7 +1373,7 @@ function init() {
     if (e.key === ' ' && t.closest('button')) return;     // a focused button already handles Space
     const act = {
       ' ': togglePlay, w: () => $('q-wheels').click(), '-': () => stepSpeed(-1), '+': () => stepSpeed(1), '=': () => stepSpeed(1),
-      d: () => $('draw').click(), s: shuffle, c: () => $('clear').click(), k: keepLayer, u: undoLayer
+      d: () => $('draw').click(), s: shuffle, c: () => $('clear').click(), k: keepLayer, u: undoLayer, 0: () => $('q-fit').click()
     }[e.key.toLowerCase()];
     if (!act) return;
     e.preventDefault();
@@ -1355,6 +1410,29 @@ function shuffle() {
   Object.assign(P, q, { hue: Math.round(rnd(0, 360)), weight: Math.round(rnd(0.8, 2.2) * 10) / 10 });
   syncUI();
   geometryChanged();
+}
+
+// Video of the drawing: restart it and record the visible canvas (circles, wheels, zoom and all) until it
+// finishes, then save. MP4 where the browser can record it (Safari, recent Chrome), otherwise WebM.
+let rec = null, recEnd = 0;
+function toggleRecord() {
+  if (rec) { rec.stop(); return; }
+  if (!model) return;
+  const type = ['video/mp4;codecs=avc1', 'video/mp4', 'video/webm;codecs=vp9', 'video/webm'].find((t) => MediaRecorder.isTypeSupported(t));
+  const stream = view.captureStream(60), chunks = [];
+  rec = new MediaRecorder(stream, type ? { mimeType: type, videoBitsPerSecond: 8e6 } : {});
+  rec.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
+  rec.onstop = () => {
+    stream.getTracks().forEach((t) => t.stop());
+    const t = rec.mimeType || type || 'video/webm';
+    download(new Blob(chunks, { type: t }), t.startsWith('video/mp4') ? 'mp4' : 'webm');
+    rec = null; clearTimeout(recEnd); recEnd = 0;
+    $('record').textContent = 'Record video'; $('record').classList.remove('primary');
+  };
+  rec.start(250);
+  clearTrace(); drawn = 0; paused = false;
+  $('record').textContent = 'Stop recording'; $('record').classList.add('primary');
+  schedule();
 }
 
 // Renders every layer plus the whole current pattern at up to 4096 px on the long side.
