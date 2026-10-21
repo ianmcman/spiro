@@ -8,3 +8,4 @@ docker-compose.yml
 fonts/OFL.txt
 .gitignore
 LICENSE
+docs
