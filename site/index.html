@@ -218,7 +218,7 @@ body:not(.open) .fab { display: block; }
         <div class="card">
           <label class="field"><span>Name or text</span><input type="text" class="text" id="text" maxlength="40" autocomplete="off" spellcheck="false" placeholder="e.g. Ada, 12 May 2026"></label>
           <label class="row" id="row-circles"><span class="lab">Circles</span><output id="o-circles"></output><input type="range" id="circles" min="0" max="100" step="1"></label>
-          <p class="note">Press Play and a chain of rotating circles writes it out: a Fourier series of the letter outlines.</p>
+          <p class="note">Press Play and a chain of rotating circles writes it out: a Fourier series of the letter strokes.</p>
         </div>
       </section>
 
@@ -590,7 +590,7 @@ function fill(m, i) {
 }
 
 /* ------------------------------------------------------------------ names */
-// A name is written by epicycles: the letter outlines become one closed path (pen lifted between pieces),
+// A name is written by epicycles: the letters' centrelines become one closed path (pen lifted between pieces),
 // its discrete Fourier transform gives one rotating circle per frequency, and chaining them traces the path.
 // Rasterised at a size that depends only on the text, so a name looks the same on any screen.
 const NAME_M = 4096;              // resampled path points (DFT length; allows up to ~4000 circles)
@@ -606,29 +606,51 @@ function nameTerms(text) {
   cv.width = W; cv.height = H;
   cx.font = font; cx.textBaseline = 'middle';
   cx.fillText(text, 4, H / 2);
-  const a = cx.getImageData(0, 0, W, H).data;
-  const on = (x, y) => x >= 0 && y >= 0 && x < W && y < H && a[(y * W + x) * 4 + 3] > 127;
-  const px = [], py = [];
-  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++)
-    if (on(x, y) && !(on(x - 1, y) && on(x + 1, y) && on(x, y - 1) && on(x, y + 1))) { px.push(x); py.push(y); }
-  const n = px.length;
-  if (!n) return null;
-  // Greedy nearest-neighbour walk over the edge pixels. Pixels within 1.5 px of the current one are used up,
-  // so the walk follows each outline (every other pixel) instead of coming back for stragglers.
-  // ponytail: O(n^2) scan, fine at <= ~10k edge pixels; a grid lookup if text gets longer
-  const used = new Uint8Array(n), ox = [], oy = [];
-  let i = 0;
-  for (;;) {
-    used[i] = 1; ox.push(px[i]); oy.push(py[i]);
-    let best = -1, bd = Infinity;
-    for (let j = 0; j < n; j++) {
-      if (used[j]) continue;
-      const d = (px[j] - px[i]) ** 2 + (py[j] - py[i]) ** 2;
-      if (d <= 2.25) used[j] = 1; else if (d < bd) { bd = d; best = j; }
+  const a = cx.getImageData(0, 0, W, H).data, b = new Uint8Array(W * H);
+  for (let i = 0; i < W * H; i++) b[i] = a[i * 4 + 3] > 127 ? 1 : 0;
+  // Zhang-Suen thinning: peel the glyphs down to one-pixel centrelines (the raster's empty border stays empty).
+  for (let changed = true; changed;) {
+    changed = false;
+    for (let pass = 0; pass < 2; pass++) {
+      const del = [];
+      for (let y = 1; y < H - 1; y++) for (let x = 1; x < W - 1; x++) {
+        const i = y * W + x;
+        if (!b[i]) continue;
+        const p2 = b[i - W], p3 = b[i - W + 1], p4 = b[i + 1], p5 = b[i + W + 1], p6 = b[i + W], p7 = b[i + W - 1], p8 = b[i - 1], p9 = b[i - W - 1];
+        const n = p2 + p3 + p4 + p5 + p6 + p7 + p8 + p9;
+        if (n < 2 || n > 6) continue;
+        const t = (!p2 && p3) + (!p3 && p4) + (!p4 && p5) + (!p5 && p6) + (!p6 && p7) + (!p7 && p8) + (!p8 && p9) + (!p9 && p2);
+        if (t !== 1) continue;
+        if (pass === 0 ? !(p2 * p4 * p6) && !(p4 * p6 * p8) : !(p2 * p4 * p8) && !(p2 * p6 * p8)) del.push(i);
+      }
+      for (const i of del) b[i] = 0;
+      if (del.length) changed = true;
     }
-    if (best < 0) break;
-    i = best;
   }
+  // Depth-first walk of each centreline, left to right: out along every stroke and back, so the pen stays down
+  // within a piece (drawing over itself) and only lifts between pieces such as separate letters or the dot on an i.
+  const OFF = [1, W + 1, W, W - 1, -1, -W - 1, -W, -W + 1], seen = new Uint8Array(W * H), ox = [], oy = [];
+  const emit = (i) => { ox.push(i % W); oy.push((i / W) | 0); };
+  for (let x = 1; x < W - 1; x++) for (let y = 1; y < H - 1; y++) {
+    const s0 = y * W + x;
+    if (!b[s0] || seen[s0]) continue;
+    const stack = [s0], next = [0];
+    seen[s0] = 1; emit(s0);
+    while (stack.length) {
+      const top = stack.length - 1, i = stack[top];
+      let k = next[top], j = -1;
+      while (k < 8 && j < 0) {
+        const q = i + OFF[k++];
+        if (!b[q]) continue;
+        if (!seen[q]) j = q;
+        else if (q !== stack[top - 1]) { emit(q); emit(i); }   // a loop closes here (o, a, e): step across and back, so no gap
+      }
+      next[top] = k;
+      if (j >= 0) { seen[j] = 1; stack.push(j); next.push(0); emit(j); }
+      else { stack.pop(); next.pop(); if (stack.length) emit(stack[stack.length - 1]); }
+    }
+  }
+  if (!ox.length) return null;
   // Resample to NAME_M points evenly in time. Hops longer than 3 px are pen-up and get a reduced share
   // of time, so the circles move across them quickly without a jump sharp enough to ring.
   const L = ox.length, seg = [], tot = [0];
