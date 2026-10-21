@@ -193,8 +193,20 @@ body:not(.open) .fab { display: block; }
 
     <div class="panel-body">
       <section class="widget">
-        <div class="widget-header">Gallery</div>
-        <div class="card"><div class="gallery" id="gallery"></div></div>
+        <div class="widget-header">Actions</div>
+        <div class="card">
+          <div class="actions">
+            <button type="button" class="btn primary" id="draw">Draw</button>
+            <button type="button" class="btn" id="shuffle">Shuffle</button>
+            <button type="button" class="btn" id="keep">Keep layer</button>
+            <button type="button" class="btn" id="undo">Undo layer</button>
+            <button type="button" class="btn" id="save">Save PNG</button>
+            <button type="button" class="btn" id="svg">Save SVG</button>
+            <button type="button" class="btn wide" id="clear">Clear all</button>
+          </div>
+          <p class="note">Drag around the canvas to roll the wheel by hand.</p>
+          <p class="note keys">Space play/pause · W wheels · &minus;/+ speed · D draw · S shuffle · K keep layer · U undo layer · C clear</p>
+        </div>
       </section>
 
       <section class="widget">
@@ -243,23 +255,6 @@ body:not(.open) .fab { display: block; }
       </section>
 
       <section class="widget">
-        <div class="widget-header">Actions</div>
-        <div class="card">
-          <div class="actions">
-            <button type="button" class="btn primary" id="draw">Draw</button>
-            <button type="button" class="btn" id="shuffle">Shuffle</button>
-            <button type="button" class="btn" id="keep">Keep layer</button>
-            <button type="button" class="btn" id="undo">Undo layer</button>
-            <button type="button" class="btn" id="save">Save PNG</button>
-            <button type="button" class="btn" id="svg">Save SVG</button>
-            <button type="button" class="btn wide" id="clear">Clear all</button>
-          </div>
-          <p class="note">Drag around the canvas to roll the wheel by hand.</p>
-          <p class="note keys">Space play/pause · W wheels · &minus;/+ speed · D draw · S shuffle · K keep layer · U undo layer · C clear</p>
-        </div>
-      </section>
-
-      <section class="widget">
         <div class="widget-header">Pattern</div>
         <div class="card readout" aria-live="polite">
           <dl>
@@ -269,6 +264,11 @@ body:not(.open) .fab { display: block; }
             <div><dt>Layers</dt><dd id="r-layers">0</dd></div>
           </dl>
         </div>
+      </section>
+
+      <section class="widget">
+        <div class="widget-header">Gallery</div>
+        <div class="card"><div class="gallery" id="gallery"></div></div>
       </section>
 
       <footer class="foot">&copy; 2026 Ian McManus &middot; MIT License &middot; <a href="https://github.com/ianmcman/spiro" target="_blank" rel="noopener noreferrer">Source on GitHub</a> &middot; <a href="https://github.com/sponsors/ianmcman" target="_blank" rel="noopener noreferrer">Sponsor</a></footer>
