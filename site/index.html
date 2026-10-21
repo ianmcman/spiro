@@ -138,6 +138,11 @@ body:not(.open) .fab { display: block; }
   background: var(--card); border: 1px solid var(--card-border); border-radius: var(--radius); box-shadow: 0 3px 0 0 var(--card-shadow);
 }
 .quick button { min-width: 40px; color: var(--text); }
+.hint {
+  position: absolute; z-index: 5; left: 50%; top: 50%; transform: translate(-50%, -50%); max-width: 80%;
+  pointer-events: none; text-align: center; color: var(--text-sub); font-size: 1.4rem; line-height: 1.6;
+}
+.hint b { color: var(--primary); font-weight: normal; }
 .quick output { min-width: 52px; text-align: center; color: var(--text-hi); font-variant-numeric: tabular-nums; }
 
 /* phones: bottom sheet */
@@ -177,6 +182,7 @@ body:not(.open) .fab { display: block; }
       <output id="q-speed" aria-label="Speed"></output>
       <button type="button" id="q-faster" aria-label="Faster">+</button>
     </div>
+    <p class="hint" id="hint">Press <b>Play</b> to draw, or drag around the canvas to roll the wheel by hand.</p>
   </main>
 
   <aside class="panel" id="panel" aria-label="Controls">
@@ -712,18 +718,12 @@ function render() {
 /* -------------------------------------------------------------- frame loop */
 function schedule() { if (!raf) raf = requestAnimationFrame(tick); saveState(); }
 
-let completeNext = false;          // gallery: show the picked pattern finished instead of waiting for Play
 function rebuild() {
   model = buildModel(P);
   N = model.N;
   drawn = 0;
   needRepaint = false;
   clearTrace();
-  if (completeNext) {
-    completeNext = false;
-    strokeRange(tctx, model, 0, N);
-    drawn = N;
-  }
   updateReadout();
 }
 
@@ -839,9 +839,10 @@ function loadPreset(pr) {
   layers = list.slice(0, -1).map((p) => ({ p }));
   rebuildLayers();
   Object.assign(P, list[list.length - 1], { speed: P.speed, showWheels: P.showWheels });
-  completeNext = true;
   syncUI();
   geometryChanged();
+  paused = false;                                   // a gallery pick draws itself
+  if (window.matchMedia(PHONE_Q).matches) setOpen(false);   // so the phone sheet doesn't hide it
 }
 function buildGallery() {
   const g = $('gallery');
@@ -922,12 +923,16 @@ function saveState() {
   }, 400);
 }
 
+const PHONE_Q = '(max-width: 639px), (orientation: landscape) and (max-height: 499px)';
+function setOpen(o) { document.body.classList.toggle('open', o); if (o) paintGallery(); }
+
 function geometryChanged() { needRebuild = true; paused = true; schedule(); }
 
 function syncPlay() {
   const playing = !paused && drawn < N;
   $('q-play').textContent = playing ? 'Pause' : 'Play';
   $('q-play').setAttribute('aria-pressed', String(playing));
+  $('hint').classList.toggle('hidden', !paused || drawn > 0 || dragging);
 }
 function togglePlay() {
   if (paused && drawn >= N) { clearTrace(); drawn = 0; }    // finished: Play starts it over
@@ -1047,8 +1052,7 @@ function init() {
   $('save').addEventListener('click', savePNG);
 
   // panel: hidden on phones, open on desktop
-  const phone = window.matchMedia('(max-width: 639px), (orientation: landscape) and (max-height: 499px)');
-  const setOpen = (o) => { document.body.classList.toggle('open', o); if (o) paintGallery(); };
+  const phone = window.matchMedia(PHONE_Q);
   setOpen(!phone.matches);
   const onPhone = (e) => setOpen(!e.matches);
   if (phone.addEventListener) phone.addEventListener('change', onPhone); else phone.addListener(onPhone);
