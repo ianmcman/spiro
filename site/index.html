@@ -84,7 +84,8 @@ select {
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23a4a698' stroke-width='1.4'/%3E%3C/svg%3E");
   background-repeat: no-repeat; background-position: right 10px center;
 }
-select:focus { outline: none; border-color: var(--primary); }
+select:focus, .text:focus { outline: none; border-color: var(--primary); }
+.text { width: 100%; min-height: 40px; padding: 0 10px; font: inherit; font-size: 16px; color: var(--text-hi); background: transparent; border: 1px solid var(--field-border); border-radius: var(--radius); }
 select option { background: var(--card); color: var(--text-hi); }
 
 /* buttons: outlined, text colour carries the state */
@@ -206,6 +207,15 @@ body:not(.open) .fab { display: block; }
           </div>
           <p class="note">Drag around the canvas to roll the wheel by hand.</p>
           <p class="note keys">Space play/pause · W wheels · &minus;/+ speed · D draw · S shuffle · K keep layer · U undo layer · C clear</p>
+        </div>
+      </section>
+
+      <section class="widget">
+        <div class="widget-header">Name</div>
+        <div class="card">
+          <label class="field"><span>Name or text</span><input type="text" class="text" id="text" maxlength="40" autocomplete="off" spellcheck="false" placeholder="e.g. Ada, 12 May 2026"></label>
+          <label class="check"><input type="checkbox" id="caption"><span>Show it on the picture</span></label>
+          <p class="note">The same text always makes the same pattern.</p>
         </div>
       </section>
 
@@ -446,7 +456,7 @@ const P = {
   ringShape: 'circle', wheelShape: 'circle', side: 'inside',
   ring: 80, wheel: 35, pen: 80, angle: 0,
   rot: 0, ink: 'cycle', hue: 0, weight: 1.2, speed: 1, showWheels: false,
-  sizing: 'pct', ringTeeth: 96, wheelTeeth: 52
+  sizing: 'pct', ringTeeth: 96, wheelTeeth: 52, text: '', caption: true
 };
 const DEFAULTS = Object.assign({}, P);
 // Tooth counts from the classic Spirograph kit: two inner rings (96, 105), two outer (144, 150), and the wheels.
@@ -713,6 +723,27 @@ function render() {
   vctx.drawImage(trace, 0, 0);
   vctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   if ((P.showWheels || dragging) && model) drawWheels(vctx);
+  drawCaption(vctx, vw, vh);
+}
+
+const captionText = () => (P.caption ? P.text.trim() : '');
+const captionSize = (w, h) => Math.max(14, Math.round(Math.min(w, h) * 0.045));
+// Name along the bottom, outlined in the background colour so it stays readable over the trace.
+function drawCaption(ctx, w, h) {
+  const t = captionText();
+  if (!t) return;
+  const size = captionSize(w, h);
+  ctx.save();
+  ctx.font = size + "px 'JetBrains Mono', monospace";
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'alphabetic';
+  ctx.lineJoin = 'round';
+  ctx.lineWidth = size * 0.35;
+  ctx.strokeStyle = '#282923';
+  ctx.strokeText(t, w / 2, h - size * 1.2, w - 24);
+  ctx.fillStyle = '#f8f8f2';
+  ctx.fillText(t, w / 2, h - size * 1.2, w - 24);
+  ctx.restore();
 }
 
 /* -------------------------------------------------------------- frame loop */
@@ -780,6 +811,8 @@ function syncUI() {
   $('ringShape').value = P.ringShape;
   $('wheelShape').value = P.wheelShape;
   $('showWheels').checked = P.showWheels;
+  $('text').value = P.text;
+  $('caption').checked = P.caption;
   $('q-wheels').setAttribute('aria-pressed', String(P.showWheels));
   $('q-speed').textContent = SLIDERS.speed.fmt(P.speed);
   document.querySelectorAll('#side button').forEach((b) => b.setAttribute('aria-checked', String(b.dataset.side === P.side)));
@@ -838,7 +871,7 @@ function loadPreset(pr) {
   const list = presetLayers(pr);
   layers = list.slice(0, -1).map((p) => ({ p }));
   rebuildLayers();
-  Object.assign(P, list[list.length - 1], { speed: P.speed, showWheels: P.showWheels });
+  Object.assign(P, list[list.length - 1], { speed: P.speed, showWheels: P.showWheels, text: P.text, caption: P.caption });
   syncUI();
   geometryChanged();
   paused = false;                                   // a gallery pick draws itself
@@ -875,7 +908,7 @@ function paintGallery() {
 
 /* ------------------------------------------------------------- URL state */
 // Settings live in the URL hash, so a reload keeps them and a copied link reproduces the pattern.
-const KEYS = ['ringShape', 'wheelShape', 'side', 'ring', 'wheel', 'pen', 'angle', 'rot', 'ink', 'hue', 'weight', 'speed', 'showWheels', 'sizing', 'ringTeeth', 'wheelTeeth'];
+const KEYS = ['ringShape', 'wheelShape', 'side', 'ring', 'wheel', 'pen', 'angle', 'rot', 'ink', 'hue', 'weight', 'speed', 'showWheels', 'sizing', 'ringTeeth', 'wheelTeeth', 'text', 'caption'];
 // Validated copy of settings from untrusted text (URL). get(k) returns the string for key k, or null.
 function applyParams(t, get, keys) {
   for (const k of keys) {
@@ -885,7 +918,8 @@ function applyParams(t, get, keys) {
     else if (k === 'side') { if (v === 'inside' || v === 'outside') t.side = v; }
     else if (k === 'sizing') { if (v === 'pct' || v === 'teeth') t.sizing = v; }
     else if (k === 'ink') { if (Object.prototype.hasOwnProperty.call(INKS, v)) t.ink = v; }
-    else if (k === 'showWheels') t.showWheels = v === '1';
+    else if (k === 'showWheels' || k === 'caption') t[k] = v === '1';
+    else if (k === 'text') t.text = v.slice(0, 40);
     else if (k === 'ringTeeth' || k === 'wheelTeeth') {
       const n = parseInt(v, 10);
       if ((k === 'ringTeeth' ? RING_TEETH : WHEEL_TEETH).includes(n)) t[k] = n;
@@ -916,7 +950,7 @@ function saveState() {
   saveTimer = setTimeout(() => {
     saveTimer = 0;
     const q = new URLSearchParams();
-    for (const k of KEYS) q.set(k, k === 'showWheels' ? (P.showWheels ? '1' : '0') : String(P[k]));
+    for (const k of KEYS) q.set(k, typeof P[k] === 'boolean' ? (P[k] ? '1' : '0') : String(P[k]));
     if (layers.length) q.set('layers', layers.map((l) => LAYER_KEYS.map((k) => l.p[k]).join(',')).join('~'));
     const h = '#' + q.toString();
     if (location.hash !== h) history.replaceState(null, '', h);
@@ -1007,7 +1041,16 @@ function init() {
 
   $('draw').addEventListener('click', () => { geometryChanged(); paused = false; });
   $('q-play').addEventListener('click', togglePlay);
-  $('shuffle').addEventListener('click', shuffle);
+  $('shuffle').addEventListener('click', () => shuffle());
+  $('text').addEventListener('input', () => {
+    P.text = $('text').value.slice(0, 40);
+    const t = P.text.trim().toLowerCase();
+    if (!t) { schedule(); return; }
+    // reset to defaults first so the pattern depends on the text alone
+    Object.assign(P, DEFAULTS, { speed: P.speed, showWheels: P.showWheels, text: P.text, caption: P.caption });
+    shuffle(seeded(t));
+  });
+  $('caption').addEventListener('change', () => { P.caption = $('caption').checked; schedule(); });
   $('clear').addEventListener('click', () => { layers = []; paintBase(); clearTrace(); drawn = 0; paused = true; updateReadout(); schedule(); });
   $('keep').addEventListener('click', keepLayer);
   $('undo').addEventListener('click', undoLayer);
@@ -1077,16 +1120,28 @@ function init() {
 }
 
 /* ----------------------------------------------------------------- actions */
-function shuffle() {
-  const pick = (a) => a[Math.random() * a.length | 0];
-  const rnd = (a, b) => a + Math.random() * (b - a);
+// FNV-1a hash of the text seeding mulberry32, so a name always gives the same pattern
+function seeded(text) {
+  let h = 2166136261;
+  for (const ch of text) h = Math.imul(h ^ ch.codePointAt(0), 16777619);
+  return () => {
+    h = (h + 0x6D2B79F5) | 0;
+    let x = Math.imul(h ^ (h >>> 15), 1 | h);
+    x = (x + Math.imul(x ^ (x >>> 7), 61 | x)) ^ x;
+    return ((x ^ (x >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function shuffle(rand = Math.random) {
+  const pick = (a) => a[rand() * a.length | 0];
+  const rnd = (a, b) => a + rand() * (b - a);
   const half = Math.max(20, Math.min(vw, vh) / 2 - 6);
   const q = Object.assign({}, P);
   // try a few random combinations and keep the first that closes within a reasonable lap count
   for (let t = 0; t < 30; t++) {
     q.ringShape = pick(SHAPES);
     q.wheelShape = pick(SHAPES);
-    q.side = Math.random() < 0.5 ? 'inside' : 'outside';
+    q.side = rand() < 0.5 ? 'inside' : 'outside';
     const wf = rnd(0.12, q.side === 'inside' ? 0.7 : 0.55);
     q.wheel = Math.round(wf * 100);
     q.ringTeeth = pick(RING_TEETH);
@@ -1115,6 +1170,7 @@ function savePNG() {
   prepCtx(octx, scale);
   for (const l of layers) strokeRange(octx, l, 0, l.N);
   strokeRange(octx, model, 0, N);
+  drawCaption(octx, vw, vh);
   out.toBlob((blob) => download(blob, 'png'), 'image/png');
 }
 
@@ -1132,6 +1188,13 @@ function download(blob, ext) {
 
 // Vector export of every layer and the whole current pattern (pen plotters, print). Points closer than
 // 0.25 px to the last one written are dropped; colour-cycled patterns are split into 90 coloured paths.
+function svgCaption() {
+  const t = captionText();
+  if (!t) return '';
+  const size = captionSize(vw, vh), esc = t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  return '<text x="' + vw / 2 + '" y="' + (vh - size * 1.2) + '" font-family="JetBrains Mono, monospace" font-size="' + size +
+    '" text-anchor="middle" fill="#f8f8f2" stroke="#282923" stroke-width="' + size * 0.35 + '" stroke-linejoin="round" paint-order="stroke">' + esc + '</text>';
+}
 function saveSVG() {
   if (!model) return;
   const out = [];
@@ -1152,7 +1215,7 @@ function saveSVG() {
   }
   const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="' + vw + '" height="' + vh + '" viewBox="0 0 ' + vw + ' ' + vh + '">' +
     '<rect width="100%" height="100%" fill="#282923"/><g fill="none" stroke-opacity="' + INK_ALPHA + '" stroke-linejoin="round">' +
-    out.join('') + '</g></svg>';
+    out.join('') + '</g>' + svgCaption() + '</svg>';
   download(new Blob([svg], { type: 'image/svg+xml' }), 'svg');
 }
 
