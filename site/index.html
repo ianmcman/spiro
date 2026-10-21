@@ -608,6 +608,22 @@ function nameTerms(text) {
   cx.fillText(text, 4, H / 2);
   const a = cx.getImageData(0, 0, W, H).data, b = new Uint8Array(W * H);
   for (let i = 0; i < W * H; i++) b[i] = a[i * 4 + 3] > 127 ? 1 : 0;
+  // Blobs before thinning, with the pixel nearest each one's centre: square dots (as in ':') can thin away entirely.
+  const blobs = [], lab = new Uint8Array(W * H);
+  for (let i = 0; i < W * H; i++) {
+    if (!b[i] || lab[i]) continue;
+    const list = [i];
+    lab[i] = 1;
+    for (let h = 0; h < list.length; h++) {
+      for (const d of [1, -1, W, -W]) { const q = list[h] + d; if (b[q] && !lab[q]) { lab[q] = 1; list.push(q); } }
+    }
+    let mx = 0, my = 0;
+    for (const q of list) { mx += q % W; my += (q / W) | 0; }
+    mx /= list.length; my /= list.length;
+    let c = list[0], cd = Infinity;
+    for (const q of list) { const d = (q % W - mx) ** 2 + (((q / W) | 0) - my) ** 2; if (d < cd) { cd = d; c = q; } }
+    blobs.push({ list, c });
+  }
   // Zhang-Suen thinning: peel the glyphs down to one-pixel centrelines (the raster's empty border stays empty).
   for (let changed = true; changed;) {
     changed = false;
@@ -627,6 +643,7 @@ function nameTerms(text) {
       if (del.length) changed = true;
     }
   }
+  for (const bl of blobs) if (!bl.list.some((q) => b[q])) b[bl.c] = 1;      // put back anything thinned to nothing
   // Depth-first walk of each centreline, left to right: out along every stroke and back, so the pen stays down
   // within a piece (drawing over itself) and only lifts between pieces such as separate letters or the dot on an i.
   const OFF = [1, W + 1, W, W - 1, -1, -W - 1, -W, -W + 1], seen = new Uint8Array(W * H), ox = [], oy = [];
@@ -634,7 +651,8 @@ function nameTerms(text) {
   for (let x = 1; x < W - 1; x++) for (let y = 1; y < H - 1; y++) {
     const s0 = y * W + x;
     if (!b[s0] || seen[s0]) continue;
-    const stack = [s0], next = [0];
+    const stack = [s0], next = [0], from = ox.length;
+    let pixels = 1, sx0 = x, sy0 = y;
     seen[s0] = 1; emit(s0);
     while (stack.length) {
       const top = stack.length - 1, i = stack[top];
@@ -646,8 +664,18 @@ function nameTerms(text) {
         else if (q !== stack[top - 1]) { emit(q); emit(i); }   // a loop closes here (o, a, e): step across and back, so no gap
       }
       next[top] = k;
-      if (j >= 0) { seen[j] = 1; stack.push(j); next.push(0); emit(j); }
+      if (j >= 0) { seen[j] = 1; stack.push(j); next.push(0); emit(j); pixels++; sx0 += j % W; sy0 += (j / W) | 0; }
       else { stack.pop(); next.pop(); if (stack.length) emit(stack[stack.length - 1]); }
+    }
+    // A dot (i, j, full stop) thins to a pixel or two, which would sit between two pen lifts and never show.
+    // Draw it as a small filled spiral instead.
+    if (pixels <= Math.max(3, size * 0.08)) {
+      const cxd = sx0 / pixels, cyd = sy0 / pixels, rd = Math.max(1.5, size * 0.02);
+      ox.length = oy.length = from;
+      for (let t = 0; t <= 1; t += 0.004) {
+        const ang = t * 6 * TAU, rr = rd * (1 - t);
+        ox.push(cxd + rr * Math.cos(ang)); oy.push(cyd + rr * Math.sin(ang));
+      }
     }
   }
   if (!ox.length) return null;
