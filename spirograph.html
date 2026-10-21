@@ -1,9 +1,12 @@
 <!DOCTYPE html>
+<!-- Spirograph. Copyright (c) 2026 Ian McManus. MIT License, https://github.com/ianmcman/spiro -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#282923">
+<meta name="author" content="Ian McManus">
+<meta name="copyright" content="Copyright (c) 2026 Ian McManus">
 <title>Spirograph</title>
 <style>
 /* Dynacat (Glance) look with its Monokai theme: bg 70 8% 15%, contrast 1.1, primary 190 81% 67% */
@@ -60,6 +63,9 @@ body:not(.open) .panel { display: none; }
 .note { margin: 10px 0 0; }
 .ink { margin-bottom: 10px; }
 .hidden { display: none !important; }
+.foot { margin: 23px 18px 0; font-size: 1.1rem; color: var(--text-sub); }
+.foot a { color: var(--text); text-decoration: none; border-bottom: 1px solid var(--field-border); }
+.foot a:hover { color: var(--primary); border-color: var(--primary); }
 .seg.first { margin: 0 0 12px; }
 .teeth { margin-bottom: 8px; }
 .gallery { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
@@ -258,6 +264,8 @@ body:not(.open) .fab { display: block; }
           </dl>
         </div>
       </section>
+
+      <footer class="foot">&copy; 2026 Ian McManus &middot; MIT License &middot; <a href="https://github.com/ianmcman/spiro" target="_blank" rel="noopener noreferrer">Source on GitHub</a></footer>
     </div>
   </aside>
 </div>
