@@ -1,0 +1,9 @@
+.git
+*.md
+README.md
+.env
+.env.example
+deploy.sh
+docker-compose.yml
+OFL.txt
+.gitignore

@@ -1,0 +1,1001 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#282923">
+<title>Spirograph</title>
+<style>
+/* Dynacat (Glance) look with its Monokai theme: bg 70 8% 15%, contrast 1.1, primary 190 81% 67% */
+@font-face { font-family: 'JetBrains Mono'; font-style: normal; font-weight: 400; font-display: swap; src: url('JetBrainsMono-Regular.woff2') format('woff2'); }
+:root {
+  --bg: hsl(70, 8%, 15%);
+  --card: hsl(70, 8%, 16%);
+  --card-border: hsl(70, 8%, 19.4%);
+  --card-shadow: hsl(70, 8%, 14.5%);
+  --separator: hsl(70, 8%, 19.4%);
+  --field-border: hsl(70, 8%, 27%);
+  --track: hsl(70, 8%, 26%);
+  --text: hsl(70, 8%, 63.8%);
+  --text-muted: hsl(70, 8%, 57.2%);
+  --text-hi: hsl(70, 8%, 93.5%);
+  --text-sub: hsl(70, 8%, 38.5%);
+  --primary: hsl(190, 81%, 67%);
+  --positive: hsl(80, 76%, 53%);
+  --negative: hsl(338, 95%, 56%);
+  --yellow: #e6db74;
+  --radius: 5px;
+  --pad: 15px 17px;
+}
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html { font-size: 62.5%; }
+html, body { height: 100%; margin: 0; }
+body {
+  background: var(--bg); color: var(--text);
+  font: 1.3rem/1.6 'JetBrains Mono', ui-monospace, Menlo, Consolas, monospace; font-variant-ligatures: none;
+  overflow: hidden; overscroll-behavior: none; -webkit-text-size-adjust: 100%;
+}
+::selection { background: hsl(70, 8%, 35%); color: var(--text-hi); }
+button, select, input { font: inherit; }
+:focus-visible { outline: 1px solid var(--primary); outline-offset: 2px; }
+
+.app { display: flex; width: 100%; height: 100vh; height: 100dvh; }
+.stage { flex: 1; min-width: 0; position: relative; }
+#view { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+
+/* side column of Glance-style widgets: title above a bordered card */
+.panel { width: 340px; flex: none; display: flex; flex-direction: column; background: var(--bg); border-left: 1px solid var(--separator); z-index: 20; }
+body:not(.open) .panel { display: none; }
+.panel-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 17px; border-bottom: 1px solid var(--separator); flex: none; }
+.panel-head h1 { margin: 0; font-size: 1.5rem; font-weight: 400; color: var(--text-hi); }
+.panel-body { overflow-y: auto; -webkit-overflow-scrolling: touch; flex: 1; padding: 8px 15px 23px; scrollbar-width: thin; scrollbar-color: var(--text-sub) transparent; }
+
+.widget { margin-top: 15px; }
+.widget-header { padding: 0 18px; margin-bottom: 0.9rem; font-size: 1.4rem; text-transform: uppercase; color: var(--text); }
+.card { background: var(--card); border: 1px solid var(--card-border); border-radius: var(--radius); box-shadow: 0 3px 0 0 var(--card-shadow); padding: var(--pad); }
+
+.pair { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.field > span, .note { font-size: 1.2rem; color: var(--text-sub); }
+.note { margin: 10px 0 0; }
+.ink { margin-bottom: 10px; }
+
+select {
+  -webkit-appearance: none; appearance: none; width: 100%; min-height: 40px; padding: 0 30px 0 10px;
+  font-size: 16px; /* 16px stops iOS zoom on focus */
+  color: var(--text-hi); background-color: transparent; border: 1px solid var(--field-border); border-radius: var(--radius); cursor: pointer;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23a4a698' stroke-width='1.4'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 10px center;
+}
+select:focus { outline: none; border-color: var(--primary); }
+select option { background: var(--card); color: var(--text-hi); }
+
+/* buttons: outlined, text colour carries the state */
+.btn, .seg button, .quick button, .icon-btn, .fab {
+  min-height: 40px; padding: 0 12px; border: 1px solid var(--field-border); border-radius: var(--radius); cursor: pointer; touch-action: manipulation;
+  background: transparent; color: var(--text-hi); font-size: 1.3rem; transition: border-color .2s, color .2s;
+}
+.btn:hover, .seg button:hover, .quick button:hover, .icon-btn:hover, .fab:hover { border-color: var(--text-sub); }
+.btn.primary { color: var(--primary); border-color: var(--primary); }
+.seg { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 12px; }
+.seg button { color: var(--text); }
+.seg button[aria-checked="true"], .quick button[aria-pressed="true"] { color: var(--primary); border-color: var(--primary); }
+.icon-btn { min-height: 34px; width: 34px; padding: 0; font-size: 1.8rem; line-height: 1; color: var(--text); }
+
+.row { display: grid; grid-template-columns: 1fr auto; grid-template-areas: "lab val" "rng rng"; align-items: center; column-gap: 8px; padding: 2px 0; }
+.row + .row { margin-top: 4px; }
+.row .lab { grid-area: lab; color: var(--text); }
+.row output { grid-area: val; color: var(--text-hi); font-variant-numeric: tabular-nums; }
+.row input[type=range] { grid-area: rng; }
+.row.dim .lab, .row.dim output { opacity: .45; }
+
+input[type=range] { -webkit-appearance: none; appearance: none; width: 100%; height: 26px; margin: 0; background: transparent; cursor: pointer; touch-action: pan-y; }
+input[type=range]::-webkit-slider-runnable-track { height: 3px; border-radius: 2px; background: var(--track); }
+input[type=range]::-moz-range-track { height: 3px; border-radius: 2px; background: var(--track); }
+input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 14px; height: 14px; margin-top: -5.5px; border-radius: 50%; border: 0; background: var(--text-hi); }
+input[type=range]::-moz-range-thumb { width: 14px; height: 14px; border-radius: 50%; border: 0; background: var(--text-hi); }
+input[type=range]:active::-webkit-slider-thumb { background: var(--primary); }
+input[type=range]:active::-moz-range-thumb { background: var(--primary); }
+
+.check { display: flex; align-items: center; gap: 10px; min-height: 36px; margin-top: 6px; cursor: pointer; color: var(--text); }
+.check input { width: 16px; height: 16px; margin: 0; accent-color: var(--primary); cursor: pointer; }
+
+.actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.actions .wide { grid-column: 1 / -1; }
+
+.readout dl { margin: 0; }
+.readout dl > div { display: flex; justify-content: space-between; gap: 12px; padding: 6px 0; }
+.readout dl > div + div { border-top: 1px solid var(--separator); }
+.readout dt { color: var(--text-sub); }
+.readout dd { margin: 0; text-align: right; color: var(--text-hi); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.readout dd.ok { color: var(--positive); }
+.readout dd.warn { color: var(--negative); }
+
+.fab { position: fixed; z-index: 30; display: none; right: max(15px, env(safe-area-inset-right)); bottom: max(15px, env(safe-area-inset-bottom)); background: var(--card); box-shadow: 0 3px 0 0 var(--card-shadow); }
+body:not(.open) .fab { display: block; }
+
+/* on-canvas quick controls */
+.quick {
+  position: absolute; z-index: 10; display: flex; align-items: center; gap: 6px; padding: 6px;
+  left: max(12px, env(safe-area-inset-left)); top: max(12px, env(safe-area-inset-top));
+  background: var(--card); border: 1px solid var(--card-border); border-radius: var(--radius); box-shadow: 0 3px 0 0 var(--card-shadow);
+}
+.quick button { min-width: 40px; color: var(--text); }
+.quick output { min-width: 52px; text-align: center; color: var(--text-hi); font-variant-numeric: tabular-nums; }
+
+/* phones: bottom sheet */
+@media (max-width: 639px), (orientation: landscape) and (max-height: 499px) {
+  .app { display: block; }
+  .stage { position: absolute; inset: 0; }
+  .panel {
+    position: fixed; left: 0; right: 0; bottom: 0; width: auto; max-height: 62vh; max-height: 62dvh;
+    border-left: 0; border-top: 1px solid var(--card-border); border-radius: var(--radius) var(--radius) 0 0;
+    padding-bottom: env(safe-area-inset-bottom);
+    transform: translateY(105%); transition: transform .25s ease-out, visibility 0s linear .25s; visibility: hidden;
+  }
+  body:not(.open) .panel { display: flex; }
+  body.open .panel { transform: translateY(0); visibility: visible; transition: transform .25s ease-out, visibility 0s; }
+}
+/* landscape phones: left side panel */
+@media (orientation: landscape) and (max-height: 499px) {
+  .panel {
+    top: 0; right: auto; width: min(360px, 56vw); max-height: none; padding-bottom: 0; padding-left: env(safe-area-inset-left);
+    border-top: 0; border-right: 1px solid var(--card-border); border-radius: 0;
+    transform: translateX(-105%);
+  }
+  body.open .panel { transform: translateX(0); }
+  .panel-body { padding-bottom: max(23px, env(safe-area-inset-bottom)); }
+}
+@media (hover: none) { .keys { display: none; } }
+@media (prefers-reduced-motion: reduce) { .panel { transition: none !important; } }
+</style>
+</head>
+<body>
+<div class="app">
+  <main class="stage" id="stage"><canvas id="view" aria-label="Spirograph pattern"></canvas>
+    <div class="quick" role="toolbar" aria-label="Quick controls">
+      <button type="button" id="q-play" aria-pressed="false">Play</button>
+      <button type="button" id="q-wheels" aria-pressed="false">Wheels</button>
+      <button type="button" id="q-slower" aria-label="Slower">&minus;</button>
+      <output id="q-speed" aria-label="Speed"></output>
+      <button type="button" id="q-faster" aria-label="Faster">+</button>
+    </div>
+  </main>
+
+  <aside class="panel" id="panel" aria-label="Controls">
+    <header class="panel-head">
+      <h1>Spirograph</h1>
+      <button type="button" class="icon-btn" id="close" aria-label="Close controls">&times;</button>
+    </header>
+
+    <div class="panel-body">
+      <section class="widget">
+        <div class="widget-header">Shapes</div>
+        <div class="card">
+          <div class="pair">
+            <label class="field"><span>Ring (fixed)</span><select id="ringShape"></select></label>
+            <label class="field"><span>Wheel (rolling)</span><select id="wheelShape"></select></label>
+          </div>
+          <div class="seg" id="side" role="radiogroup" aria-label="Rolling side">
+            <button type="button" role="radio" aria-checked="false" data-side="outside">Outside</button>
+            <button type="button" role="radio" aria-checked="true" data-side="inside">Inside</button>
+          </div>
+          <p class="note" id="sideNote"></p>
+        </div>
+      </section>
+
+      <section class="widget">
+        <div class="widget-header">Sizes</div>
+        <div class="card">
+          <label class="row"><span class="lab">Ring size</span><output id="o-ring"></output><input type="range" id="ring" min="20" max="100" step="1"></label>
+          <label class="row"><span class="lab">Wheel size</span><output id="o-wheel"></output><input type="range" id="wheel" min="5" max="100" step="1"></label>
+          <label class="row"><span class="lab">Pen radius</span><output id="o-pen"></output><input type="range" id="pen" min="0" max="150" step="1"></label>
+          <label class="row" id="row-angle"><span class="lab">Pen angle</span><output id="o-angle"></output><input type="range" id="angle" min="0" max="360" step="1"></label>
+          <label class="row"><span class="lab">Rotation</span><output id="o-rot"></output><input type="range" id="rot" min="0" max="360" step="1"></label>
+        </div>
+      </section>
+
+      <section class="widget">
+        <div class="widget-header">Appearance</div>
+        <div class="card">
+          <label class="field ink"><span>Ink</span><select id="ink"></select></label>
+          <label class="row" id="row-hue"><span class="lab">Colour offset</span><output id="o-hue"></output><input type="range" id="hue" min="0" max="360" step="1"></label>
+          <label class="row"><span class="lab">Line weight</span><output id="o-weight"></output><input type="range" id="weight" min="0.5" max="4" step="0.1"></label>
+          <label class="row"><span class="lab">Draw speed</span><output id="o-speed"></output><input type="range" id="speed" min="0.05" max="8" step="0.05"></label>
+          <label class="check"><input type="checkbox" id="showWheels"><span>Show wheels</span></label>
+        </div>
+      </section>
+
+      <section class="widget">
+        <div class="widget-header">Actions</div>
+        <div class="card">
+          <div class="actions">
+            <button type="button" class="btn primary" id="draw">Draw</button>
+            <button type="button" class="btn" id="shuffle">Shuffle</button>
+            <button type="button" class="btn" id="keep">Keep layer</button>
+            <button type="button" class="btn" id="undo">Undo layer</button>
+            <button type="button" class="btn" id="save">Save PNG</button>
+            <button type="button" class="btn" id="svg">Save SVG</button>
+            <button type="button" class="btn wide" id="clear">Clear all</button>
+          </div>
+          <p class="note">Drag around the canvas to roll the wheel by hand.</p>
+          <p class="note keys">Space play/pause · W wheels · &minus;/+ speed · D draw · S shuffle · K keep layer · U undo layer · C clear</p>
+        </div>
+      </section>
+
+      <section class="widget">
+        <div class="widget-header">Pattern</div>
+        <div class="card readout" aria-live="polite">
+          <dl>
+            <div><dt>Closure</dt><dd id="r-closure">-</dd></div>
+            <div><dt>Match</dt><dd id="r-exact">-</dd></div>
+            <div><dt>Ratio</dt><dd id="r-ratio">-</dd></div>
+            <div><dt>Layers</dt><dd id="r-layers">0</dd></div>
+          </dl>
+        </div>
+      </section>
+    </div>
+  </aside>
+</div>
+<button type="button" class="fab" id="fab">Controls</button>
+
+<script>
+(() => {
+'use strict';
+
+const TAU = Math.PI * 2;
+const SHAPES = ['circle', 'ellipse', 'squircle', 'heart', 'rosette', 'triangle', 'square', 'pentagon', 'hexagon', 'star', 'burst'];
+const CHUNK = 48;                 // samples per stroke chunk
+const MAX_SAMPLES = 250000;
+const INSIDE_CAP = 0.97;          // inside wheel max = 97% of ring radius
+
+/* ------------------------------------------------------------------ shapes */
+// Each generator returns an array of [x, y] points along a closed outline.
+function param(n, fn) {
+  const out = [];
+  for (let i = 0; i < n; i++) out.push(fn(TAU * i / n));
+  return out;
+}
+// Polygon / star with straight edges, each edge subdivided so arc-length lookups stay smooth.
+function spiky(V, radiusAt, sub) {
+  const v = [];
+  for (let i = 0; i < V; i++) {
+    const a = -Math.PI / 2 + TAU * i / V, r = radiusAt(i);
+    v.push([r * Math.cos(a), r * Math.sin(a)]);
+  }
+  const out = [];
+  for (let i = 0; i < V; i++) {
+    const a = v[i], b = v[(i + 1) % V];
+    for (let j = 0; j < sub; j++) {
+      const t = j / sub;
+      out.push([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]);
+    }
+  }
+  return out;
+}
+const sgn = (v) => (v < 0 ? -1 : 1);
+const GEN = {
+  circle:   () => param(2048, (t) => [Math.cos(t), Math.sin(t)]),
+  ellipse:  () => param(2048, (t) => [Math.cos(t), 0.6 * Math.sin(t)]),
+  squircle: () => param(2048, (t) => {            // |x|^4 + |y|^4 = 1
+    const c = Math.cos(t), s = Math.sin(t);
+    return [sgn(c) * Math.sqrt(Math.abs(c)), sgn(s) * Math.sqrt(Math.abs(s))];
+  }),
+  heart:    () => param(2048, (t) => [
+    16 * Math.pow(Math.sin(t), 3),
+    -(13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t))
+  ]),
+  rosette:  () => param(2048, (t) => {
+    const r = 0.7 + 0.3 * Math.cos(6 * t);
+    return [r * Math.cos(t), r * Math.sin(t)];
+  }),
+  triangle: () => spiky(3, () => 1, 240),
+  square:   () => spiky(4, () => 1, 180),
+  pentagon: () => spiky(5, () => 1, 150),
+  hexagon:  () => spiky(6, () => 1, 120),
+  star:     () => spiky(10, (i) => (i % 2 ? 0.4 : 1), 72),
+  burst:    () => spiky(24, (i) => (i % 2 ? 0.62 : 1), 30)
+};
+
+/* ------------------------------------------------------------------- curve */
+// Closed CCW polyline: centred on its area centroid, scaled so max radius = R,
+// with cumulative arc length and a unit tangent per segment.
+function makeCurve(name, R) {
+  const raw = GEN[name]();
+  const pts = [];
+  for (const p of raw) {
+    const q = pts[pts.length - 1];
+    if (!q || Math.hypot(p[0] - q[0], p[1] - q[1]) > 1e-9) pts.push(p);
+  }
+  while (pts.length > 1 && Math.hypot(pts[0][0] - pts[pts.length - 1][0], pts[0][1] - pts[pts.length - 1][1]) <= 1e-9) pts.pop();
+  const n = pts.length;
+
+  let A = 0;                                      // signed area
+  for (let i = 0; i < n; i++) {
+    const p = pts[i], q = pts[(i + 1) % n];
+    A += p[0] * q[1] - q[0] * p[1];
+  }
+  A /= 2;
+  if (A < 0) { pts.reverse(); A = -A; }           // force CCW
+
+  let cx = 0, cy = 0;                             // area centroid
+  for (let i = 0; i < n; i++) {
+    const p = pts[i], q = pts[(i + 1) % n], c = p[0] * q[1] - q[0] * p[1];
+    cx += (p[0] + q[0]) * c;
+    cy += (p[1] + q[1]) * c;
+  }
+  cx /= 6 * A; cy /= 6 * A;
+
+  let maxR = 0;
+  for (const p of pts) maxR = Math.max(maxR, Math.hypot(p[0] - cx, p[1] - cy));
+  const k = R / maxR;
+
+  const xs = new Float64Array(n), ys = new Float64Array(n);
+  for (let i = 0; i < n; i++) { xs[i] = (pts[i][0] - cx) * k; ys[i] = (pts[i][1] - cy) * k; }
+
+  const cum = new Float64Array(n + 1), tx = new Float64Array(n), ty = new Float64Array(n);
+  for (let i = 0; i < n; i++) {
+    const j = (i + 1) % n, dx = xs[j] - xs[i], dy = ys[j] - ys[i], len = Math.hypot(dx, dy);
+    cum[i + 1] = cum[i] + len;
+    tx[i] = dx / len; ty[i] = dy / len;
+  }
+  // turn[v]: signed tangent turn at vertex v (1..n, vertex n = vertex 0), from segment v-1 to segment v
+  const turn = new Float64Array(n + 1);
+  let T = 0;
+  for (let v = 1; v <= n; v++) {
+    const a = tx[v - 1], b = ty[v - 1], c = tx[v % n], d = ty[v % n];
+    turn[v] = Math.atan2(a * d - b * c, a * c + b * d);
+    T += Math.abs(turn[v]);
+  }
+  return { n, xs, ys, cum, tx, ty, turn, T, P: cum[n] };
+}
+
+// Point and unit tangent at arc length s (wrapped), by binary search over cum[].
+const L = { x: 0, y: 0, tx: 0, ty: 0 };
+function locate(c, s) {
+  s %= c.P;
+  if (s < 0) s += c.P;
+  let lo = 0, hi = c.n - 1;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    if (c.cum[mid] <= s) lo = mid; else hi = mid - 1;
+  }
+  const f = s - c.cum[lo];
+  L.x = c.xs[lo] + c.tx[lo] * f;
+  L.y = c.ys[lo] + c.ty[lo] * f;
+  L.tx = c.tx[lo]; L.ty = c.ty[lo];
+}
+
+/* --------------------------------------------------------- rolling geometry */
+// Roll the wheel along the ring without slipping. s = arc length along the ring.
+//  inside : wheel arc u = s,  outward normals coincide at contact
+//  outside: wheel arc u = -s, outward normals are opposite (psi + pi)
+const F = { px: 0, py: 0, wx: 0, wy: 0, rx: 0, ry: 0, cos: 1, sin: 0 };
+// dpsi: extra rotation while pivoting about a vertex (see nextSample).
+function frame(m, s, dpsi) {
+  locate(m.ring, s);
+  const rx = L.x, ry = L.y, nx = L.ty, ny = -L.tx;           // ring outward normal (ty, -tx)
+  locate(m.wheel, m.inside ? s : -s);
+  const dx = L.x, dy = L.y, wnx = L.ty, wny = -L.tx;         // wheel outward normal at u
+  let psi = Math.atan2(ny, nx) - Math.atan2(wny, wnx);
+  if (!m.inside) psi += Math.PI;
+  psi += dpsi;
+  const c = Math.cos(psi), sn = Math.sin(psi);
+  const wx = rx - dx * c + dy * sn, wy = ry - dx * sn - dy * c;  // wheel centre (wheel-frame origin)
+  F.px = wx + m.penX * c - m.penY * sn;
+  F.py = wy + m.penX * sn + m.penY * c;
+  F.wx = wx; F.wy = wy;
+  F.rx = rx; F.ry = ry; F.cos = c; F.sin = sn;
+}
+
+// Smallest k (1..400) with k * Pr ~ m * Pw (relative error < 1e-3); falls back to the best fit.
+function closure(Pr, Pw) {
+  const ratio = Pr / Pw;
+  let best = null;
+  for (let k = 1; k <= 400; k++) {
+    const x = k * ratio, m = Math.round(x);
+    if (m < 1) continue;
+    const err = Math.abs(x - m) / x;
+    if (!best || err < best.err) best = { k, m, err };
+    if (err < 1e-3) return { k, m, err, found: true, ratio };
+  }
+  if (!best) best = { k: 1, m: 1, err: 1 };
+  return { k: best.k, m: best.m, err: best.err, found: false, ratio };
+}
+
+/* ------------------------------------------------------------------- state */
+const P = {
+  ringShape: 'circle', wheelShape: 'circle', side: 'inside',
+  ring: 80, wheel: 35, pen: 80, angle: 0,
+  rot: 0, ink: 'cycle', hue: 0, weight: 1.2, speed: 1, showWheels: false
+};
+let vw = 0, vh = 0, dpr = 1;
+let model = null, N = 0, drawn = 0, paused = true, dragging = false;   // nothing draws until Play or Draw
+let needRebuild = false, needRepaint = false, raf = 0;
+
+const $ = (id) => document.getElementById(id);
+const view = $('view'), vctx = view.getContext('2d');
+const trace = document.createElement('canvas'), tctx = trace.getContext('2d');   // live pattern
+const base = document.createElement('canvas'), bctx = base.getContext('2d');     // kept layers
+
+// Geometry only (no samples): used by buildModel and by Shuffle to test closure cheaply.
+function geometry(p, half) {
+  const inside = p.side === 'inside';
+  const ringR = Math.max(1, p.ring / 100 * half);
+  const ring = makeCurve(p.ringShape, ringR);
+  // No drift: rescale the wheel so k ring laps are exactly m wheel perimeters (perimeter scales linearly).
+  const asked = ringR * Math.min(p.wheel / 100, inside ? INSIDE_CAP : 1);
+  const clo = closure(ring.P, makeCurve(p.wheelShape, asked).P);
+  const snap = (clo.k * ring.P / clo.m) / makeCurve(p.wheelShape, 1).P / asked;
+  const wheelR = asked * snap, wheel = makeCurve(p.wheelShape, wheelR);
+  clo.snap = snap - 1;
+  clo.ratio = ring.P / wheel.P;
+  const a = p.angle * Math.PI / 180, d = p.pen / 100 * wheelR;
+  return { inside, ring, wheel, ringR, wheelR, penX: d * Math.cos(a), penY: d * Math.sin(a), clo };
+}
+
+// p is the live settings object for the current pattern, or a frozen copy for a kept layer.
+function buildModel(p) {
+  const half = Math.max(20, Math.min(vw, vh) / 2 - 6);
+  const m = geometry(p, half);
+  m.p = p;
+  const { k } = m.clo;
+  m.span = k * m.ring.P;
+  // Samples are spaced evenly in arc length + LAMBDA * |rotation at vertices|, so corners get time to pivot.
+  m.lambda = m.wheelR + Math.hypot(m.penX, m.penY);
+  m.tau = m.span + m.lambda * (k * m.ring.T + m.clo.m * m.wheel.T);
+  m.N = Math.min(MAX_SAMPLES, Math.max(3000, Math.round(k * 1500 * m.tau / m.span)));
+  m.walk = { s: 0, tau: 0, ri: 1, wi: m.inside ? 1 : 0, pend: 0, turn: 0, w: 0 };
+  m.ss = new Float64Array(m.N + 1);
+  m.dp = new Float32Array(m.N + 1);
+  m.cx = vw / 2; m.cy = vh / 2;
+  m.xs = new Float32Array(m.N + 1);
+  m.ys = new Float32Array(m.N + 1);
+  m.done = 0;                       // samples computed so far; fill() extends this as drawing reaches them
+  const rot = (p.rot || 0) * Math.PI / 180;
+  m.rc = Math.cos(rot); m.rs = Math.sin(rot);
+  // which way the contact point goes round the centre (screen angle sign), for rolling by hand
+  locate(m.ring, 0); const a0 = Math.atan2(L.y, L.x);
+  locate(m.ring, m.ring.P / 64); const a1 = Math.atan2(L.y, L.x);
+  m.dir = Math.sin(a1 - a0) >= 0 ? 1 : -1;
+  return m;
+}
+
+// Arc length s of ring vertex g (g >= 1, counting across laps), and of wheel vertex g. Outside, the wheel
+// runs backwards (u = -s), so its vertices come in descending order starting with vertex 0 at s = 0.
+function ringEvent(m, g) { const c = m.ring, v = (g - 1) % c.n + 1; return { s: Math.floor((g - 1) / c.n) * c.P + c.cum[v], turn: c.turn[v] }; }
+function wheelEvent(m, g) {
+  const c = m.wheel;
+  if (m.inside) { const v = (g - 1) % c.n + 1; return { s: Math.floor((g - 1) / c.n) * c.P + c.cum[v], turn: c.turn[v] }; }
+  const v = c.n - g % c.n;
+  return { s: Math.floor(g / c.n) * c.P + c.P - c.cum[v], turn: c.turn[v] };
+}
+
+// Walk the pattern to parameter tau (called with increasing tau). Between vertices tau advances with s;
+// at a ring or wheel vertex s holds still while the wheel pivots through the vertex's turn, which costs
+// lambda * |turn| of tau. Result in S: s (just past the vertex) and dpsi, the rotation still to come.
+const S = { s: 0, d: 0 };
+// Vertices not reached yet but already passed by the + EPS in S.s: their whole turn is still to come.
+function ahead(m, st) {
+  let d = 0;
+  const re = ringEvent(m, st.ri), we = wheelEvent(m, st.wi);
+  if (re.s < S.s) d += part(m, 1, re.turn, 1);
+  if (we.s < S.s) d += part(m, 2, we.turn, 1);
+  return d;
+}
+// Rotation still to come for a ring (kind 1) or wheel (kind 2) vertex with `left` of its turn remaining.
+// Ring and inside wheel: the tangent lags by the turn. Outside, the wheel runs backwards, so the sign flips.
+const part = (m, kind, turn, left) => (kind === 1 || !m.inside ? -left * turn : left * turn);
+const EPS = 1e-6;
+const NONE = { s: Infinity, turn: 0 };
+function nextSample(m, tau) {
+  const st = m.walk;
+  for (;;) {
+    if (st.pend) {
+      if (tau <= st.tau + st.w) {
+        const left = 1 - (st.w > 0 ? (tau - st.tau) / st.w : 1);
+        S.s = st.s + EPS;
+        S.d = part(m, st.pend, st.turn, left) + ahead(m, st);
+        return;
+      }
+      st.tau += st.w; st.pend = 0;
+      continue;
+    }
+    // one period has exactly k * n ring vertices and m * n wheel vertices (outside: g = 0 .. m*n - 1)
+    const re = st.ri <= m.clo.k * m.ring.n ? ringEvent(m, st.ri) : NONE;
+    const we = st.wi < m.clo.m * m.wheel.n + (m.inside ? 1 : 0) ? wheelEvent(m, st.wi) : NONE;
+    const e = re.s <= we.s ? re : we;
+    if (e === NONE || tau < st.tau + (e.s - st.s)) {
+      S.s = st.s + (tau - st.tau) + EPS;
+      S.d = ahead(m, st);
+      return;
+    }
+    st.tau += e.s - st.s; st.s = e.s;
+    st.pend = e === re ? 1 : 2; st.turn = e.turn; st.w = m.lambda * Math.abs(e.turn);
+    if (e === re) st.ri++; else st.wi++;
+  }
+}
+
+// Compute samples up to index i, as drawing reaches them.
+function fill(m, i) {
+  for (let j = m.done; j <= i; j++) {
+    if (j === m.N) { m.xs[j] = m.xs[0]; m.ys[j] = m.ys[0]; m.ss[j] = m.ss[0]; m.dp[j] = m.dp[0]; continue; }   // closes exactly
+    nextSample(m, j / m.N * m.tau);
+    m.ss[j] = S.s; m.dp[j] = S.d;
+    frame(m, S.s, S.d);
+    m.xs[j] = m.cx + F.px * m.rc - F.py * m.rs;
+    m.ys[j] = m.cy + F.px * m.rs + F.py * m.rc;
+  }
+  if (i >= m.done) m.done = i + 1;
+}
+
+/* --------------------------------------------------------------- rendering */
+function strokeChunk(ctx, m, i0, i1) {
+  fill(m, i1);
+  const xs = m.xs, ys = m.ys;
+  ctx.beginPath();
+  ctx.moveTo(xs[i0], ys[i0]);
+  for (let i = i0 + 1; i <= i1; i++) ctx.lineTo(xs[i], ys[i]);
+  const c = inkRGB(m.p, i0 / m.N);
+  ctx.strokeStyle = 'rgba(' + c[0] + ',' + c[1] + ',' + c[2] + ',' + INK_ALPHA + ')';
+  ctx.lineWidth = m.p.weight;
+  ctx.stroke();
+}
+// Samples i0..i1 of pattern m, in chunks so the colour can drift along the line.
+function strokeRange(ctx, m, i0, i1) {
+  for (let i = i0; i < i1; i += CHUNK) strokeChunk(ctx, m, i, Math.min(i1, i + CHUNK));
+}
+function prepCtx(ctx, scale) {
+  ctx.setTransform(scale, 0, 0, scale, 0, 0);
+  ctx.lineJoin = 'round';
+  ctx.lineCap = 'butt';      // round caps would double up (and darken) where chunks meet
+}
+
+// Monokai accents (pink, orange, yellow, green, cyan, purple); the colour drifts through them once per pattern.
+// Or one solid pen per layer, as with a real kit.
+const INKS = {
+  cycle: null, pink: [249, 38, 114], orange: [253, 151, 31], yellow: [230, 219, 116], green: [166, 226, 46],
+  cyan: [102, 217, 239], purple: [174, 129, 255], white: [248, 248, 242]
+};
+const CYCLE = ['pink', 'orange', 'yellow', 'green', 'cyan', 'purple'].map((k) => INKS[k]);
+const INK_ALPHA = 0.85;
+// t = position along the pattern, 0..1
+function inkRGB(p, t) {
+  if (p.ink !== 'cycle' && INKS[p.ink]) return INKS[p.ink];
+  t += p.hue / 360;
+  const x = (t - Math.floor(t)) * CYCLE.length, i = x | 0, f = x - i, a = CYCLE[i], b = CYCLE[(i + 1) % CYCLE.length];
+  return [0, 1, 2].map((k) => Math.round(a[k] + (b[k] - a[k]) * f));
+}
+
+function clearCanvas(ctx) {
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+  ctx.restore();
+}
+const clearTrace = () => clearCanvas(tctx);
+
+/* ------------------------------------------------------------------ layers */
+// Kept patterns sit under the live one. Each stores its settings so it can be rebuilt after a resize.
+let layers = [];
+function paintBase() {
+  clearCanvas(bctx);
+  for (const l of layers) strokeRange(bctx, l, 0, l.N);
+}
+function keepLayer() {
+  if (!model || !drawn) return;
+  const m = buildModel(Object.assign({}, P));                 // frozen copy of the settings
+  fill(m, m.N);
+  m.ss = m.dp = null;                                         // only the wheel overlay needs these
+  layers.push(m);
+  strokeRange(bctx, m, 0, m.N);
+  geometryChanged();                                          // fresh, paused pattern on top
+}
+function undoLayer() {
+  if (!layers.length) return;
+  layers.pop();
+  paintBase();
+  updateReadout();
+  schedule();
+}
+function rebuildLayers() {
+  layers = layers.map((l) => { const m = buildModel(l.p); fill(m, m.N); m.ss = m.dp = null; return m; });
+  paintBase();
+}
+// Appearance changed: replay the already-drawn samples with the new colour/weight (no geometry rebuild).
+function repaintTrace() {
+  clearTrace();
+  if (!model) return;
+  strokeRange(tctx, model, 0, drawn);
+}
+
+function advance() {
+  let budget = Math.max(1, Math.round(P.speed * (24 + N / 600)));
+  while (budget > 0 && drawn < N) {
+    const len = Math.min(CHUNK, budget, N - drawn);
+    strokeChunk(tctx, model, drawn, drawn + len);
+    drawn += len;
+    budget -= len;
+  }
+}
+
+function drawWheels(ctx) {
+  const m = model;
+  fill(m, drawn);
+  frame(m, m.ss[drawn], m.dp[drawn]);
+  const c = F.cos, s = F.sin, rx = F.rx, ry = F.ry, ox = m.cx + F.wx, oy = m.cy + F.wy;
+  ctx.save();
+  ctx.translate(m.cx, m.cy); ctx.transform(m.rc, m.rs, -m.rs, m.rc, 0, 0); ctx.translate(-m.cx, -m.cy);   // pattern rotation
+  ctx.lineWidth = 1.25;
+  ctx.lineJoin = 'round';
+  // ring
+  ctx.strokeStyle = 'rgba(165,167,152,0.35)';              // ring: muted text colour
+  ctx.beginPath();
+  for (let i = 0; i < m.ring.n; i++) {
+    const x = m.cx + m.ring.xs[i], y = m.cy + m.ring.ys[i];
+    if (i) ctx.lineTo(x, y); else ctx.moveTo(x, y);
+  }
+  ctx.closePath();
+  ctx.stroke();
+  // wheel outline: rotate by psi about the wheel centre and place it at the posed centre
+  ctx.strokeStyle = 'rgba(102,217,239,0.9)';               // wheel: primary cyan
+  ctx.beginPath();
+  const w = m.wheel;
+  for (let i = 0; i < w.n; i++) {
+    const x = ox + w.xs[i] * c - w.ys[i] * s, y = oy + w.xs[i] * s + w.ys[i] * c;
+    if (i) ctx.lineTo(x, y); else ctx.moveTo(x, y);
+  }
+  ctx.closePath();
+  ctx.stroke();
+  // pen arm, wheel centre, pen point
+  const px = m.cx + F.px, py = m.cy + F.py, wx = m.cx + F.wx, wy = m.cy + F.wy;
+  ctx.strokeStyle = 'rgba(230,219,116,0.9)';               // pen arm: yellow
+  ctx.beginPath(); ctx.moveTo(wx, wy); ctx.lineTo(px, py); ctx.stroke();
+  ctx.fillStyle = 'rgba(102,217,239,0.9)';
+  ctx.beginPath(); ctx.arc(wx, wy, 2.5, 0, TAU); ctx.fill();
+  ctx.fillStyle = 'rgba(237,238,233,0.8)';
+  ctx.beginPath(); ctx.arc(m.cx + rx, m.cy + ry, 2.5, 0, TAU); ctx.fill();
+  ctx.fillStyle = '#f92672';
+  ctx.beginPath(); ctx.arc(px, py, 4, 0, TAU); ctx.fill();
+  ctx.restore();
+}
+
+function render() {
+  vctx.setTransform(1, 0, 0, 1, 0, 0);
+  vctx.clearRect(0, 0, view.width, view.height);
+  vctx.drawImage(base, 0, 0);
+  vctx.drawImage(trace, 0, 0);
+  vctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  if ((P.showWheels || dragging) && model) drawWheels(vctx);
+}
+
+/* -------------------------------------------------------------- frame loop */
+function schedule() { if (!raf) raf = requestAnimationFrame(tick); saveState(); }
+
+function rebuild() {
+  model = buildModel(P);
+  N = model.N;
+  drawn = 0;
+  needRepaint = false;
+  clearTrace();
+  updateReadout();
+}
+
+function tick() {
+  raf = 0;
+  if (!vw) return;
+  if (needRebuild) { needRebuild = false; rebuild(); }
+  if (needRepaint) { needRepaint = false; repaintTrace(); }
+  if (model && !paused && drawn < N) advance();
+  render();
+  syncPlay();
+  if (model && !paused && drawn < N) schedule();
+}
+
+/* ------------------------------------------------------------------ resize */
+function resize() {
+  const r = $('stage').getBoundingClientRect();
+  const w = Math.max(1, Math.round(r.width)), h = Math.max(1, Math.round(r.height));
+  const d = Math.min(window.devicePixelRatio || 1, 2);
+  if (w === vw && h === vh && d === dpr) return;
+  vw = w; vh = h; dpr = d;
+  view.width = trace.width = base.width = Math.max(1, Math.round(w * d));
+  view.height = trace.height = base.height = Math.max(1, Math.round(h * d));
+  prepCtx(tctx, dpr);
+  prepCtx(bctx, dpr);
+  rebuildLayers();
+  needRebuild = true;
+  schedule();
+}
+let resizeTimer = 0;
+function onResize() { clearTimeout(resizeTimer); resizeTimer = setTimeout(resize, 180); }
+window.addEventListener('resize', onResize);
+window.addEventListener('orientationchange', onResize);
+if (window.ResizeObserver) new ResizeObserver(onResize).observe($('stage'));
+
+/* ---------------------------------------------------------------------- UI */
+const SLIDERS = {
+  ring:   { geo: true,  fmt: (v) => v + '%' },
+  wheel:  { geo: true,  fmt: (v) => v + '%' + (P.side === 'inside' && v > INSIDE_CAP * 100 ? ' (cap 97%)' : '') },
+  pen:    { geo: true,  fmt: (v) => v + '%' },
+  angle:  { geo: true,  fmt: (v) => v + '°' },
+  rot:    { geo: true,  fmt: (v) => v + '°' },
+  hue:    { geo: false, fmt: (v) => v },
+  weight: { geo: false, fmt: (v) => Number(v).toFixed(1) + 'px' },
+  speed:  { geo: false, fmt: (v) => Number(v).toFixed(2) + 'x' }
+};
+
+function syncUI() {
+  for (const id in SLIDERS) {
+    $(id).value = P[id];
+    $('o-' + id).textContent = SLIDERS[id].fmt(P[id]);
+  }
+  $('ringShape').value = P.ringShape;
+  $('wheelShape').value = P.wheelShape;
+  $('showWheels').checked = P.showWheels;
+  $('q-wheels').setAttribute('aria-pressed', String(P.showWheels));
+  $('q-speed').textContent = SLIDERS.speed.fmt(P.speed);
+  document.querySelectorAll('#side button').forEach((b) => b.setAttribute('aria-checked', String(b.dataset.side === P.side)));
+  $('sideNote').textContent = P.side === 'inside'
+    ? 'Hypocycloid type. Wheel capped at 97% of the ring radius.'
+    : 'Epicycloid type. Wheel rolls around the outside of the ring.';
+  $('row-angle').classList.toggle('dim', P.wheelShape === 'circle');
+  $('ink').value = P.ink;
+  $('row-hue').classList.toggle('dim', P.ink !== 'cycle');
+}
+
+function updateReadout() {
+  const c = model.clo;
+  $('r-closure').textContent = c.k + (c.k === 1 ? ' ring lap' : ' ring laps') + ', ' + c.m + (c.m === 1 ? ' wheel turn' : ' wheel turns');
+  const ex = $('r-exact');
+  const pct = Math.abs(c.snap) * 100;
+  ex.textContent = 'exact' + (pct >= 0.0005 ? ', wheel ' + (c.snap > 0 ? '+' : '-') + pct.toFixed(3) + '% to close' : '');
+  ex.className = 'ok';
+  $('r-layers').textContent = layers.length ? layers.length + ' kept' : 'none';
+  $('r-ratio').textContent = c.ratio.toFixed(4) + '  (' + model.ring.P.toFixed(0) + ' / ' + model.wheel.P.toFixed(0) + ')';
+}
+
+/* ------------------------------------------------------------- URL state */
+// Settings live in the URL hash, so a reload keeps them and a copied link reproduces the pattern.
+const KEYS = ['ringShape', 'wheelShape', 'side', 'ring', 'wheel', 'pen', 'angle', 'rot', 'ink', 'hue', 'weight', 'speed', 'showWheels'];
+function loadState() {
+  const q = new URLSearchParams(location.hash.slice(1));
+  for (const k of KEYS) {
+    const v = q.get(k);
+    if (v === null) continue;
+    if (k === 'ringShape' || k === 'wheelShape') { if (SHAPES.includes(v)) P[k] = v; }
+    else if (k === 'side') { if (v === 'inside' || v === 'outside') P.side = v; }
+    else if (k === 'ink') { if (v in INKS) P.ink = v; }
+    else if (k === 'showWheels') P.showWheels = v === '1';
+    else {
+      const n = parseFloat(v), el = $(k);
+      if (isFinite(n)) P[k] = Math.min(parseFloat(el.max), Math.max(parseFloat(el.min), n));
+    }
+  }
+}
+let saveTimer = 0;
+function saveState() {
+  if (saveTimer) return;
+  saveTimer = setTimeout(() => {
+    saveTimer = 0;
+    const q = new URLSearchParams();
+    for (const k of KEYS) q.set(k, k === 'showWheels' ? (P.showWheels ? '1' : '0') : String(P[k]));
+    const h = '#' + q.toString();
+    if (location.hash !== h) history.replaceState(null, '', h);
+  }, 400);
+}
+
+function geometryChanged() { needRebuild = true; paused = true; schedule(); }
+
+function syncPlay() {
+  const playing = !paused && drawn < N;
+  $('q-play').textContent = playing ? 'Pause' : 'Play';
+  $('q-play').setAttribute('aria-pressed', String(playing));
+}
+function togglePlay() {
+  if (paused && drawn >= N) { clearTrace(); drawn = 0; }    // finished: Play starts it over
+  paused = !paused;
+  schedule();
+}
+
+function init() {
+  for (const name in INKS) {
+    const o = document.createElement('option');
+    o.value = name; o.textContent = name === 'cycle' ? 'monokai cycle' : name;
+    $('ink').appendChild(o);
+  }
+  $('ink').addEventListener('change', () => { P.ink = $('ink').value; syncUI(); needRepaint = true; schedule(); });
+  for (const sel of [$('ringShape'), $('wheelShape')]) {
+    for (const name of SHAPES) {
+      const o = document.createElement('option');
+      o.value = o.textContent = name;
+      sel.appendChild(o);
+    }
+  }
+  loadState();
+  syncUI();
+
+  for (const id in SLIDERS) {
+    $(id).addEventListener('input', () => {
+      P[id] = parseFloat($(id).value);
+      $('o-' + id).textContent = SLIDERS[id].fmt(P[id]);
+      if (SLIDERS[id].geo) geometryChanged();
+      else if (id === 'hue' || id === 'weight') { needRepaint = true; schedule(); }
+      else if (id === 'speed') $('q-speed').textContent = SLIDERS.speed.fmt(P.speed);
+    });
+  }
+  for (const id of ['ringShape', 'wheelShape']) {
+    $(id).addEventListener('change', () => {
+      P[id] = $(id).value;
+      syncUI();
+      geometryChanged();
+    });
+  }
+  document.querySelectorAll('#side button').forEach((b) => b.addEventListener('click', () => {
+    P.side = b.dataset.side;
+    syncUI();
+    geometryChanged();
+  }));
+  $('showWheels').addEventListener('change', () => { P.showWheels = $('showWheels').checked; syncUI(); schedule(); });
+  $('q-wheels').addEventListener('click', () => { P.showWheels = !P.showWheels; syncUI(); schedule(); });
+  // speed steps roughly double; the panel slider still allows any value in between
+  const STEPS = [0.05, 0.1, 0.25, 0.5, 1, 2, 4, 8];
+  const stepSpeed = (dir) => {
+    const next = dir > 0 ? STEPS.find((v) => v > P.speed + 1e-9) : STEPS.slice().reverse().find((v) => v < P.speed - 1e-9);
+    if (next === undefined) return;
+    P.speed = next;
+    syncUI();
+  };
+  $('q-slower').addEventListener('click', () => stepSpeed(-1));
+  $('q-faster').addEventListener('click', () => stepSpeed(1));
+
+  $('draw').addEventListener('click', () => { geometryChanged(); paused = false; });
+  $('q-play').addEventListener('click', togglePlay);
+  $('shuffle').addEventListener('click', shuffle);
+  $('clear').addEventListener('click', () => { layers = []; paintBase(); clearTrace(); drawn = 0; paused = true; updateReadout(); schedule(); });
+  $('keep').addEventListener('click', keepLayer);
+  $('undo').addEventListener('click', undoLayer);
+  $('svg').addEventListener('click', saveSVG);
+
+  // drag on the canvas to roll the wheel forward by hand (one ring lap per turn round the centre)
+  let dragA = 0, dragAcc = 0;
+  const angleOf = (e) => {
+    const b = view.getBoundingClientRect();
+    return Math.atan2(e.clientY - b.top - model.cy, e.clientX - b.left - model.cx);
+  };
+  view.addEventListener('pointerdown', (e) => {
+    if (!model || needRebuild) return;
+    try { view.setPointerCapture(e.pointerId); } catch (_) { /* synthetic events have no capturable pointer */ }
+    dragging = true; paused = true; dragA = angleOf(e); dragAcc = 0;
+    schedule();
+  });
+  view.addEventListener('pointermove', (e) => {
+    if (!dragging) return;
+    const a = angleOf(e);
+    let da = a - dragA;
+    da -= TAU * Math.round(da / TAU);
+    dragA = a;
+    dragAcc = Math.max(0, dragAcc + da * model.dir * N / (TAU * model.clo.k));   // backwards does nothing
+    const n = Math.floor(dragAcc);
+    if (n > 0 && drawn < N) {
+      dragAcc -= n;
+      const end = Math.min(N, drawn + n);
+      strokeRange(tctx, model, drawn, end);
+      drawn = end;
+    }
+    schedule();
+  });
+  const endDrag = () => { if (dragging) { dragging = false; schedule(); } };
+  view.addEventListener('pointerup', endDrag);
+  view.addEventListener('pointercancel', endDrag);
+  $('save').addEventListener('click', savePNG);
+
+  // panel: hidden on phones, open on desktop
+  const phone = window.matchMedia('(max-width: 639px), (orientation: landscape) and (max-height: 499px)');
+  const setOpen = (o) => document.body.classList.toggle('open', o);
+  setOpen(!phone.matches);
+  const onPhone = (e) => setOpen(!e.matches);
+  if (phone.addEventListener) phone.addEventListener('change', onPhone); else phone.addListener(onPhone);
+  $('close').addEventListener('click', () => setOpen(false));
+
+  // keyboard: ignored in sliders and selects so they keep their own keys
+  document.addEventListener('keydown', (e) => {
+    const t = e.target instanceof Element ? e.target : document.body;
+    if (e.ctrlKey || e.metaKey || e.altKey || t.closest('input, select')) return;
+    if (e.key === ' ' && t.closest('button')) return;     // a focused button already handles Space
+    const act = {
+      ' ': togglePlay, w: () => $('q-wheels').click(), '-': () => stepSpeed(-1), '+': () => stepSpeed(1), '=': () => stepSpeed(1),
+      d: () => $('draw').click(), s: shuffle, c: () => $('clear').click(), k: keepLayer, u: undoLayer
+    }[e.key.toLowerCase()];
+    if (!act) return;
+    e.preventDefault();
+    act();
+  });
+  $('fab').addEventListener('click', () => setOpen(true));
+
+  resize();
+}
+
+/* ----------------------------------------------------------------- actions */
+function shuffle() {
+  const pick = (a) => a[Math.random() * a.length | 0];
+  const rnd = (a, b) => a + Math.random() * (b - a);
+  const half = Math.max(20, Math.min(vw, vh) / 2 - 6);
+  const q = Object.assign({}, P);
+  // try a few random combinations and keep the first that closes within a reasonable lap count
+  for (let t = 0; t < 30; t++) {
+    q.ringShape = pick(SHAPES);
+    q.wheelShape = pick(SHAPES);
+    q.side = Math.random() < 0.5 ? 'inside' : 'outside';
+    const wf = rnd(0.12, q.side === 'inside' ? 0.7 : 0.55);
+    q.wheel = Math.round(wf * 100);
+    q.pen = Math.round(rnd(30, 140));
+    q.angle = Math.round(rnd(0, 360));
+    let ring = rnd(40, 85);
+    if (q.side === 'outside') ring = Math.min(ring, 96 / (1 + wf * (1 + Math.max(q.pen / 100, 1))));   // keep it on screen
+    q.ring = Math.max(20, Math.round(ring));
+    if (geometry(q, half).clo.k <= 30) break;
+  }
+  Object.assign(P, q, { hue: Math.round(rnd(0, 360)), weight: Math.round(rnd(0.8, 2.2) * 10) / 10 });
+  syncUI();
+  geometryChanged();
+}
+
+// Renders every layer plus the whole current pattern at up to 4096 px on the long side.
+function savePNG() {
+  if (!model) return;
+  const scale = Math.max(dpr, Math.min(4, 4096 / Math.max(vw, vh)));
+  const out = document.createElement('canvas');
+  out.width = Math.round(vw * scale); out.height = Math.round(vh * scale);
+  const octx = out.getContext('2d');
+  octx.fillStyle = '#282923';
+  octx.fillRect(0, 0, out.width, out.height);
+  prepCtx(octx, scale);
+  for (const l of layers) strokeRange(octx, l, 0, l.N);
+  strokeRange(octx, model, 0, N);
+  out.toBlob((blob) => download(blob, 'png'), 'image/png');
+}
+
+function download(blob, ext) {
+  if (!blob) return;
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'spirograph-' + new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19) + '.' + ext;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+}
+
+// Vector export of every layer and the whole current pattern (pen plotters, print). Points closer than
+// 0.25 px to the last one written are dropped; colour-cycled patterns are split into 90 coloured paths.
+function saveSVG() {
+  if (!model) return;
+  const out = [];
+  for (const m of layers.concat([model])) {
+    fill(m, m.N);
+    const step = m.p.ink === 'cycle' ? Math.ceil(m.N / 90) : m.N;
+    for (let i = 0; i < m.N; i += step) {
+      const e = Math.min(m.N, i + step), c = inkRGB(m.p, i / m.N);
+      let lx = m.xs[i], ly = m.ys[i], d = 'M' + lx.toFixed(1) + ' ' + ly.toFixed(1);
+      for (let j = i + 1; j <= e; j++) {
+        const x = m.xs[j], y = m.ys[j];
+        if (j < e && (x - lx) * (x - lx) + (y - ly) * (y - ly) < 0.0625) continue;
+        d += 'L' + x.toFixed(1) + ' ' + y.toFixed(1);
+        lx = x; ly = y;
+      }
+      out.push('<path d="' + d + '" stroke="rgb(' + c.join(',') + ')" stroke-width="' + m.p.weight + '"/>');
+    }
+  }
+  const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="' + vw + '" height="' + vh + '" viewBox="0 0 ' + vw + ' ' + vh + '">' +
+    '<rect width="100%" height="100%" fill="#282923"/><g fill="none" stroke-opacity="' + INK_ALPHA + '" stroke-linejoin="round">' +
+    out.join('') + '</g></svg>';
+  download(new Blob([svg], { type: 'image/svg+xml' }), 'svg');
+}
+
+init();
+})();
+</script>
+</body>
+</html>
