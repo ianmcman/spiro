@@ -8,6 +8,9 @@
 <meta name="author" content="Ian McManus">
 <meta name="copyright" content="Copyright (c) 2026 Ian McManus">
 <title>Spirograph</title>
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="icon" href="favicon-32.png" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
 <style>
 /* Dynacat (Glance) look with its Monokai theme: bg 70 8% 15%, contrast 1.1, primary 190 81% 67% */
 @font-face { font-family: 'JetBrains Mono'; font-style: normal; font-weight: 400; font-display: swap; src: url('JetBrainsMono-Regular.woff2') format('woff2'); }
@@ -214,8 +217,7 @@ body:not(.open) .fab { display: block; }
         <div class="widget-header">Name</div>
         <div class="card">
           <label class="field"><span>Name or text</span><input type="text" class="text" id="text" maxlength="40" autocomplete="off" spellcheck="false" placeholder="e.g. Ada, 12 May 2026"></label>
-          <label class="check"><input type="checkbox" id="caption"><span>Show it on the picture</span></label>
-          <p class="note">The same text always makes the same pattern.</p>
+          <p class="note">Press Play and a chain of rotating circles writes it out: a Fourier series of the letter outlines.</p>
         </div>
       </section>
 
@@ -456,7 +458,7 @@ const P = {
   ringShape: 'circle', wheelShape: 'circle', side: 'inside',
   ring: 80, wheel: 35, pen: 80, angle: 0,
   rot: 0, ink: 'cycle', hue: 0, weight: 1.2, speed: 1, showWheels: false,
-  sizing: 'pct', ringTeeth: 96, wheelTeeth: 52, text: '', caption: true
+  sizing: 'pct', ringTeeth: 96, wheelTeeth: 52, text: ''
 };
 const DEFAULTS = Object.assign({}, P);
 // Tooth counts from the classic Spirograph kit: two inner rings (96, 105), two outer (144, 150), and the wheels.
@@ -492,6 +494,7 @@ function geometry(p, half) {
 
 // p is the live settings object for the current pattern, or a frozen copy for a kept layer.
 function buildModel(p, w = vw, h = vh, maxN = MAX_SAMPLES) {
+  if (p.text && p.text.trim()) return buildName(p, w, h, maxN);
   const half = Math.max(20, Math.min(w, h) / 2 - 6);
   const m = geometry(p, half);
   m.p = p;
@@ -585,13 +588,140 @@ function fill(m, i) {
   if (i >= m.done) m.done = i + 1;
 }
 
+/* ------------------------------------------------------------------ names */
+// A name is written by epicycles: the letter outlines become one closed path (pen lifted between pieces),
+// its discrete Fourier transform gives one rotating circle per frequency, and chaining them traces the path.
+// Rasterised at a size that depends only on the text, so a name looks the same on any screen.
+const NAME_M = 1024;              // resampled path points (DFT length)
+const NAME_N = 12000;             // drawn samples
+const nameCache = new Map();
+function nameTerms(text) {
+  if (nameCache.has(text)) return nameCache.get(text);
+  const size = Math.max(32, Math.min(96, Math.round(900 / text.length)));
+  const font = size + "px 'JetBrains Mono', monospace";
+  const cv = document.createElement('canvas'), cx = cv.getContext('2d');
+  cx.font = font;
+  const W = Math.ceil(cx.measureText(text).width) + 8, H = Math.ceil(size * 1.5);
+  cv.width = W; cv.height = H;
+  cx.font = font; cx.textBaseline = 'middle';
+  cx.fillText(text, 4, H / 2);
+  const a = cx.getImageData(0, 0, W, H).data;
+  const on = (x, y) => x >= 0 && y >= 0 && x < W && y < H && a[(y * W + x) * 4 + 3] > 127;
+  const px = [], py = [];
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++)
+    if (on(x, y) && !(on(x - 1, y) && on(x + 1, y) && on(x, y - 1) && on(x, y + 1))) { px.push(x); py.push(y); }
+  const n = px.length;
+  if (!n) return null;
+  // Greedy nearest-neighbour walk over the edge pixels. Pixels within 1.5 px of the current one are used up,
+  // so the walk follows each outline (every other pixel) instead of coming back for stragglers.
+  // ponytail: O(n^2) scan, fine at <= ~6k edge pixels; a grid lookup if text gets longer
+  const used = new Uint8Array(n), ox = [], oy = [];
+  let i = 0;
+  for (;;) {
+    used[i] = 1; ox.push(px[i]); oy.push(py[i]);
+    let best = -1, bd = Infinity;
+    for (let j = 0; j < n; j++) {
+      if (used[j]) continue;
+      const d = (px[j] - px[i]) ** 2 + (py[j] - py[i]) ** 2;
+      if (d <= 2.25) used[j] = 1; else if (d < bd) { bd = d; best = j; }
+    }
+    if (best < 0) break;
+    i = best;
+  }
+  // Resample to NAME_M points evenly in time. Hops longer than 3 px are pen-up and get a reduced share
+  // of time, so the circles move across them quickly without a jump sharp enough to ring.
+  const L = ox.length, seg = [], tot = [0];
+  for (let k = 0; k < L; k++) {
+    const d = Math.hypot(ox[(k + 1) % L] - ox[k], oy[(k + 1) % L] - oy[k]);
+    seg.push(d > 3 ? Math.max(4, d * 0.6) : d);
+    tot.push(tot[k] + seg[k]);
+  }
+  const rx = new Float64Array(NAME_M), ry = new Float64Array(NAME_M), up = new Uint8Array(NAME_M);
+  for (let j = 0, k = 0; j < NAME_M; j++) {
+    const t = j / NAME_M * tot[L];
+    while (k < L - 1 && tot[k + 1] < t) k++;
+    const f = seg[k] ? (t - tot[k]) / seg[k] : 0, k1 = (k + 1) % L;
+    rx[j] = ox[k] + (ox[k1] - ox[k]) * f; ry[j] = oy[k] + (oy[k1] - oy[k]) * f;
+    up[j] = Math.hypot(ox[k1] - ox[k], oy[k1] - oy[k]) > 3 ? 1 : 0;
+  }
+  // DFT, frequencies -K..K; the DC term (the centroid) anchors the chain and is not a circle.
+  const K = Math.max(200, Math.min(400, text.length * 40)), fr = [], cr = [], ci = [];
+  let c0r = 0, c0i = 0;
+  for (let f = -K; f <= K; f++) {
+    let sr = 0, si = 0;
+    for (let j = 0; j < NAME_M; j++) {
+      const ang = -TAU * f * j / NAME_M, c = Math.cos(ang), s = Math.sin(ang);
+      sr += rx[j] * c - ry[j] * s; si += rx[j] * s + ry[j] * c;
+    }
+    sr /= NAME_M; si /= NAME_M;
+    if (f === 0) { c0r = sr; c0i = si; } else { fr.push(f); cr.push(sr); ci.push(si); }
+  }
+  const order = fr.map((_, k) => k).sort((p, q) => Math.hypot(cr[q], ci[q]) - Math.hypot(cr[p], ci[p]));   // big circles first
+  let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+  for (let j = 0; j < NAME_M; j++) { x0 = Math.min(x0, rx[j]); x1 = Math.max(x1, rx[j]); y0 = Math.min(y0, ry[j]); y1 = Math.max(y1, ry[j]); }
+  const T = {
+    fr: order.map((k) => fr[k]), cr: order.map((k) => cr[k]), ci: order.map((k) => ci[k]),
+    c0r, c0i, up, rx, ry, mx: (x0 + x1) / 2, my: (y0 + y1) / 2, bw: Math.max(1, x1 - x0), bh: Math.max(1, y1 - y0)
+  };
+  nameCache.set(text, T);
+  return T;
+}
+
+// Same shape as a spirograph model where the rest of the app looks (xs, ys, N, cx, cy, dir, clo.k),
+// plus up[i]: the segment arriving at sample i is pen-up.
+function buildName(p, w, h, maxN) {
+  const T = nameTerms(p.text.trim());
+  if (!T) return buildModel(Object.assign({}, p, { text: '' }), w, h, maxN);
+  const N = Math.min(maxN, NAME_N), sc = Math.min(0.9 * w / T.bw, 0.55 * h / T.bh);
+  const m = { p, fourier: true, T, sc, N, done: N + 1, cx: w / 2, cy: h / 2, dir: 1, clo: { k: 1 },
+    xs: new Float32Array(N + 1), ys: new Float32Array(N + 1), up: new Uint8Array(N + 1) };
+  const K = T.fr.length, zr = Float64Array.from(T.cr), zi = Float64Array.from(T.ci), sr = new Float64Array(K), si = new Float64Array(K);
+  for (let k = 0; k < K; k++) { sr[k] = Math.cos(TAU * T.fr[k] / N); si[k] = Math.sin(TAU * T.fr[k] / N); }
+  for (let i = 0; i < N; i++) {
+    let x = T.c0r, y = T.c0i;
+    for (let k = 0; k < K; k++) {
+      x += zr[k]; y += zi[k];
+      const r = zr[k] * sr[k] - zi[k] * si[k];               // advance each term by one sample
+      zi[k] = zr[k] * si[k] + zi[k] * sr[k]; zr[k] = r;
+    }
+    m.xs[i] = m.cx + (x - T.mx) * sc; m.ys[i] = m.cy + (y - T.my) * sc;
+    m.up[i] = T.up[Math.floor(i * NAME_M / N)];
+  }
+  m.xs[N] = m.xs[0]; m.ys[N] = m.ys[0]; m.up[N] = T.up[NAME_M - 1];
+  return m;
+}
+
+function drawEpicycles(ctx, m, i) {
+  const T = m.T, sc = m.sc, t = TAU * i / m.N;
+  let x = m.cx + (T.c0r - T.mx) * sc, y = m.cy + (T.c0i - T.my) * sc;
+  const circles = new Path2D(), arms = new Path2D();
+  arms.moveTo(x, y);
+  for (let k = 0; k < T.fr.length; k++) {
+    const c = Math.cos(T.fr[k] * t), s = Math.sin(T.fr[k] * t);
+    const dx = (T.cr[k] * c - T.ci[k] * s) * sc, dy = (T.cr[k] * s + T.ci[k] * c) * sc, r = Math.hypot(dx, dy);
+    if (r > 0.75) { circles.moveTo(x + r, y); circles.arc(x, y, r, 0, TAU); }
+    x += dx; y += dy;
+    arms.lineTo(x, y);
+  }
+  ctx.save();
+  ctx.lineWidth = 1;
+  ctx.strokeStyle = 'rgba(165,167,152,0.3)';               // circles: muted text colour
+  ctx.stroke(circles);
+  ctx.strokeStyle = 'rgba(102,217,239,0.8)';               // arms: primary cyan
+  ctx.stroke(arms);
+  ctx.fillStyle = '#f92672';
+  ctx.beginPath(); ctx.arc(x, y, 3.5, 0, TAU); ctx.fill();
+  ctx.restore();
+}
+
 /* --------------------------------------------------------------- rendering */
 function strokeChunk(ctx, m, i0, i1) {
   fill(m, i1);
   const xs = m.xs, ys = m.ys;
   ctx.beginPath();
   ctx.moveTo(xs[i0], ys[i0]);
-  for (let i = i0 + 1; i <= i1; i++) ctx.lineTo(xs[i], ys[i]);
+  const up = m.up;
+  for (let i = i0 + 1; i <= i1; i++) if (up && up[i]) ctx.moveTo(xs[i], ys[i]); else ctx.lineTo(xs[i], ys[i]);
   const c = inkRGB(m.p, i0 / m.N);
   ctx.strokeStyle = 'rgba(' + c[0] + ',' + c[1] + ',' + c[2] + ',' + INK_ALPHA + ')';
   ctx.lineWidth = m.p.weight;
@@ -645,7 +775,7 @@ function keepLayer() {
   m.ss = m.dp = null;                                         // only the wheel overlay needs these
   layers.push(m);
   strokeRange(bctx, m, 0, m.N);
-  geometryChanged();                                          // fresh, paused pattern on top
+  geometryChanged(true);                                      // fresh, paused pattern on top
 }
 function undoLayer() {
   if (!layers.length) return;
@@ -666,7 +796,7 @@ function repaintTrace() {
 }
 
 function advance() {
-  let budget = Math.max(1, Math.round(P.speed * (24 + N / 600)));
+  let budget = Math.max(1, Math.round(P.speed * (model.fourier ? 14 : 24 + N / 600)));   // names go slower so the circles can be watched
   while (budget > 0 && drawn < N) {
     const len = Math.min(CHUNK, budget, N - drawn);
     strokeChunk(tctx, model, drawn, drawn + len);
@@ -677,6 +807,7 @@ function advance() {
 
 function drawWheels(ctx) {
   const m = model;
+  if (m.fourier) { drawEpicycles(ctx, m, drawn); return; }
   fill(m, drawn);
   frame(m, m.ss[drawn], m.dp[drawn]);
   const c = F.cos, s = F.sin, rx = F.rx, ry = F.ry, ox = m.cx + F.wx, oy = m.cy + F.wy;
@@ -722,28 +853,7 @@ function render() {
   vctx.drawImage(base, 0, 0);
   vctx.drawImage(trace, 0, 0);
   vctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  if ((P.showWheels || dragging) && model) drawWheels(vctx);
-  drawCaption(vctx, vw, vh);
-}
-
-const captionText = () => (P.caption ? P.text.trim() : '');
-const captionSize = (w, h) => Math.max(14, Math.round(Math.min(w, h) * 0.045));
-// Name along the bottom, outlined in the background colour so it stays readable over the trace.
-function drawCaption(ctx, w, h) {
-  const t = captionText();
-  if (!t) return;
-  const size = captionSize(w, h);
-  ctx.save();
-  ctx.font = size + "px 'JetBrains Mono', monospace";
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'alphabetic';
-  ctx.lineJoin = 'round';
-  ctx.lineWidth = size * 0.35;
-  ctx.strokeStyle = '#282923';
-  ctx.strokeText(t, w / 2, h - size * 1.2, w - 24);
-  ctx.fillStyle = '#f8f8f2';
-  ctx.fillText(t, w / 2, h - size * 1.2, w - 24);
-  ctx.restore();
+  if (model && (P.showWheels || dragging || (model.fourier && drawn < N))) drawWheels(vctx);   // names show their circles while writing
 }
 
 /* -------------------------------------------------------------- frame loop */
@@ -812,7 +922,6 @@ function syncUI() {
   $('wheelShape').value = P.wheelShape;
   $('showWheels').checked = P.showWheels;
   $('text').value = P.text;
-  $('caption').checked = P.caption;
   $('q-wheels').setAttribute('aria-pressed', String(P.showWheels));
   $('q-speed').textContent = SLIDERS.speed.fmt(P.speed);
   document.querySelectorAll('#side button').forEach((b) => b.setAttribute('aria-checked', String(b.dataset.side === P.side)));
@@ -830,6 +939,13 @@ function syncUI() {
 }
 
 function updateReadout() {
+  $('r-layers').textContent = layers.length ? layers.length + ' kept' : 'none';
+  if (model.fourier) {
+    $('r-closure').textContent = model.T.fr.length + ' circles';
+    $('r-exact').textContent = 'Fourier series'; $('r-exact').className = '';
+    $('r-ratio').textContent = '-';
+    return;
+  }
   const c = model.clo;
   $('r-closure').textContent = c.k + (c.k === 1 ? ' ring lap' : ' ring laps') + ', ' + c.m + (c.m === 1 ? ' wheel turn' : ' wheel turns');
   const ex = $('r-exact');
@@ -871,7 +987,8 @@ function loadPreset(pr) {
   const list = presetLayers(pr);
   layers = list.slice(0, -1).map((p) => ({ p }));
   rebuildLayers();
-  Object.assign(P, list[list.length - 1], { speed: P.speed, showWheels: P.showWheels, text: P.text, caption: P.caption });
+  Object.assign(P, list[list.length - 1], { speed: P.speed, showWheels: P.showWheels });
+  dropText();
   syncUI();
   geometryChanged();
   paused = false;                                   // a gallery pick draws itself
@@ -908,7 +1025,7 @@ function paintGallery() {
 
 /* ------------------------------------------------------------- URL state */
 // Settings live in the URL hash, so a reload keeps them and a copied link reproduces the pattern.
-const KEYS = ['ringShape', 'wheelShape', 'side', 'ring', 'wheel', 'pen', 'angle', 'rot', 'ink', 'hue', 'weight', 'speed', 'showWheels', 'sizing', 'ringTeeth', 'wheelTeeth', 'text', 'caption'];
+const KEYS = ['ringShape', 'wheelShape', 'side', 'ring', 'wheel', 'pen', 'angle', 'rot', 'ink', 'hue', 'weight', 'speed', 'showWheels', 'sizing', 'ringTeeth', 'wheelTeeth', 'text'];
 // Validated copy of settings from untrusted text (URL). get(k) returns the string for key k, or null.
 function applyParams(t, get, keys) {
   for (const k of keys) {
@@ -918,7 +1035,7 @@ function applyParams(t, get, keys) {
     else if (k === 'side') { if (v === 'inside' || v === 'outside') t.side = v; }
     else if (k === 'sizing') { if (v === 'pct' || v === 'teeth') t.sizing = v; }
     else if (k === 'ink') { if (Object.prototype.hasOwnProperty.call(INKS, v)) t.ink = v; }
-    else if (k === 'showWheels' || k === 'caption') t[k] = v === '1';
+    else if (k === 'showWheels') t.showWheels = v === '1';
     else if (k === 'text') t.text = v.slice(0, 40);
     else if (k === 'ringTeeth' || k === 'wheelTeeth') {
       const n = parseInt(v, 10);
@@ -931,7 +1048,10 @@ function applyParams(t, get, keys) {
   return t;
 }
 // Kept layers go in one 'layers' key: layers separated by '~', fields by ',' in LAYER_KEYS order.
-const LAYER_KEYS = ['ringShape', 'wheelShape', 'side', 'ring', 'wheel', 'pen', 'angle', 'rot', 'ink', 'hue', 'weight', 'sizing', 'ringTeeth', 'wheelTeeth'];
+const LAYER_KEYS = ['ringShape', 'wheelShape', 'side', 'ring', 'wheel', 'pen', 'angle', 'rot', 'ink', 'hue', 'weight', 'sizing', 'ringTeeth', 'wheelTeeth', 'text'];
+// text is the last field; escaped so its commas and tildes can't split fields or layers
+const encText = (t) => encodeURIComponent(t).replace(/~/g, '%7E');
+const decText = (t) => { try { return decodeURIComponent(t); } catch (_) { return ''; } };
 const MAX_LAYERS = 24;
 function loadState() {
   const q = new URLSearchParams(location.hash.slice(1));
@@ -939,9 +1059,9 @@ function loadState() {
   const enc = q.get('layers');
   if (enc) {
     layers = enc.split('~').map((str) => str.split(','))
-      .filter((f) => f.length === LAYER_KEYS.length)          // drop malformed entries rather than guess
+      .filter((f) => f.length === LAYER_KEYS.length || f.length === LAYER_KEYS.length - 1)   // older links have no text field; drop anything else
       .slice(0, MAX_LAYERS)
-      .map((f) => ({ p: applyParams(Object.assign({}, DEFAULTS), (k) => f[LAYER_KEYS.indexOf(k)], LAYER_KEYS) }));
+      .map((f) => ({ p: applyParams(Object.assign({}, DEFAULTS), (k) => { const v = f[LAYER_KEYS.indexOf(k)]; return k === 'text' && v ? decText(v) : v; }, LAYER_KEYS) }));
   }
 }
 let saveTimer = 0;
@@ -951,7 +1071,7 @@ function saveState() {
     saveTimer = 0;
     const q = new URLSearchParams();
     for (const k of KEYS) q.set(k, typeof P[k] === 'boolean' ? (P[k] ? '1' : '0') : String(P[k]));
-    if (layers.length) q.set('layers', layers.map((l) => LAYER_KEYS.map((k) => l.p[k]).join(',')).join('~'));
+    if (layers.length) q.set('layers', layers.map((l) => LAYER_KEYS.map((k) => (k === 'text' ? encText(l.p.text) : l.p[k])).join(',')).join('~'));
     const h = '#' + q.toString();
     if (location.hash !== h) history.replaceState(null, '', h);
   }, 400);
@@ -960,7 +1080,9 @@ function saveState() {
 const PHONE_Q = '(max-width: 639px), (orientation: landscape) and (max-height: 499px)';
 function setOpen(o) { document.body.classList.toggle('open', o); if (o) paintGallery(); }
 
-function geometryChanged() { needRebuild = true; paused = true; schedule(); }
+// Any other way of setting the pattern replaces a name.
+function dropText() { if (P.text) { P.text = ''; $('text').value = ''; } }
+function geometryChanged(keepText) { if (!keepText) dropText(); needRebuild = true; paused = true; schedule(); }
 
 function syncPlay() {
   const playing = !paused && drawn < N;
@@ -1039,18 +1161,16 @@ function init() {
   $('q-slower').addEventListener('click', () => stepSpeed(-1));
   $('q-faster').addEventListener('click', () => stepSpeed(1));
 
-  $('draw').addEventListener('click', () => { geometryChanged(); paused = false; });
+  $('draw').addEventListener('click', () => { geometryChanged(true); paused = false; });
   $('q-play').addEventListener('click', togglePlay);
-  $('shuffle').addEventListener('click', () => shuffle());
+  $('shuffle').addEventListener('click', shuffle);
+  let textTimer = 0;
   $('text').addEventListener('input', () => {
-    P.text = $('text').value.slice(0, 40);
-    const t = P.text.trim().toLowerCase();
-    if (!t) { schedule(); return; }
-    // reset to defaults first so the pattern depends on the text alone
-    Object.assign(P, DEFAULTS, { speed: P.speed, showWheels: P.showWheels, text: P.text, caption: P.caption });
-    shuffle(seeded(t));
+    clearTimeout(textTimer);
+    textTimer = setTimeout(() => { P.text = $('text').value.slice(0, 40); geometryChanged(true); }, 150);
   });
-  $('caption').addEventListener('change', () => { P.caption = $('caption').checked; schedule(); });
+  // a shared link can arrive before the font: rasterise names again once it has loaded
+  document.fonts.load("96px 'JetBrains Mono'").then(() => { nameCache.clear(); if (P.text.trim() || layers.some((l) => l.p.text)) { rebuildLayers(); needRebuild = true; schedule(); } }, () => {});
   $('clear').addEventListener('click', () => { layers = []; paintBase(); clearTrace(); drawn = 0; paused = true; updateReadout(); schedule(); });
   $('keep').addEventListener('click', keepLayer);
   $('undo').addEventListener('click', undoLayer);
@@ -1120,28 +1240,17 @@ function init() {
 }
 
 /* ----------------------------------------------------------------- actions */
-// FNV-1a hash of the text seeding mulberry32, so a name always gives the same pattern
-function seeded(text) {
-  let h = 2166136261;
-  for (const ch of text) h = Math.imul(h ^ ch.codePointAt(0), 16777619);
-  return () => {
-    h = (h + 0x6D2B79F5) | 0;
-    let x = Math.imul(h ^ (h >>> 15), 1 | h);
-    x = (x + Math.imul(x ^ (x >>> 7), 61 | x)) ^ x;
-    return ((x ^ (x >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
-function shuffle(rand = Math.random) {
-  const pick = (a) => a[rand() * a.length | 0];
-  const rnd = (a, b) => a + rand() * (b - a);
+function shuffle() {
+  dropText();
+  const pick = (a) => a[Math.random() * a.length | 0];
+  const rnd = (a, b) => a + Math.random() * (b - a);
   const half = Math.max(20, Math.min(vw, vh) / 2 - 6);
   const q = Object.assign({}, P);
   // try a few random combinations and keep the first that closes within a reasonable lap count
   for (let t = 0; t < 30; t++) {
     q.ringShape = pick(SHAPES);
     q.wheelShape = pick(SHAPES);
-    q.side = rand() < 0.5 ? 'inside' : 'outside';
+    q.side = Math.random() < 0.5 ? 'inside' : 'outside';
     const wf = rnd(0.12, q.side === 'inside' ? 0.7 : 0.55);
     q.wheel = Math.round(wf * 100);
     q.ringTeeth = pick(RING_TEETH);
@@ -1170,7 +1279,6 @@ function savePNG() {
   prepCtx(octx, scale);
   for (const l of layers) strokeRange(octx, l, 0, l.N);
   strokeRange(octx, model, 0, N);
-  drawCaption(octx, vw, vh);
   out.toBlob((blob) => download(blob, 'png'), 'image/png');
 }
 
@@ -1188,13 +1296,6 @@ function download(blob, ext) {
 
 // Vector export of every layer and the whole current pattern (pen plotters, print). Points closer than
 // 0.25 px to the last one written are dropped; colour-cycled patterns are split into 90 coloured paths.
-function svgCaption() {
-  const t = captionText();
-  if (!t) return '';
-  const size = captionSize(vw, vh), esc = t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  return '<text x="' + vw / 2 + '" y="' + (vh - size * 1.2) + '" font-family="JetBrains Mono, monospace" font-size="' + size +
-    '" text-anchor="middle" fill="#f8f8f2" stroke="#282923" stroke-width="' + size * 0.35 + '" stroke-linejoin="round" paint-order="stroke">' + esc + '</text>';
-}
 function saveSVG() {
   if (!model) return;
   const out = [];
@@ -1206,8 +1307,9 @@ function saveSVG() {
       let lx = m.xs[i], ly = m.ys[i], d = 'M' + lx.toFixed(1) + ' ' + ly.toFixed(1);
       for (let j = i + 1; j <= e; j++) {
         const x = m.xs[j], y = m.ys[j];
-        if (j < e && (x - lx) * (x - lx) + (y - ly) * (y - ly) < 0.0625) continue;
-        d += 'L' + x.toFixed(1) + ' ' + y.toFixed(1);
+        const pen = m.up && m.up[j];
+        if (!pen && j < e && (x - lx) * (x - lx) + (y - ly) * (y - ly) < 0.0625) continue;
+        d += (pen ? 'M' : 'L') + x.toFixed(1) + ' ' + y.toFixed(1);
         lx = x; ly = y;
       }
       out.push('<path d="' + d + '" stroke="rgb(' + c.join(',') + ')" stroke-width="' + m.p.weight + '"/>');
@@ -1215,7 +1317,7 @@ function saveSVG() {
   }
   const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="' + vw + '" height="' + vh + '" viewBox="0 0 ' + vw + ' ' + vh + '">' +
     '<rect width="100%" height="100%" fill="#282923"/><g fill="none" stroke-opacity="' + INK_ALPHA + '" stroke-linejoin="round">' +
-    out.join('') + '</g>' + svgCaption() + '</svg>';
+    out.join('') + '</g></svg>';
   download(new Blob([svg], { type: 'image/svg+xml' }), 'svg');
 }
 
