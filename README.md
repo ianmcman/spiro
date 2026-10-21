@@ -47,8 +47,8 @@ It prints `healthy` once `/healthz` answers. You can also `curl http://HOST:8080
 
 ## Font
 
-`JetBrainsMono-Regular.woff2` is JetBrains Mono, under the SIL Open Font License 1.1 (see `OFL.txt`). It is served from the container, so the page makes no third-party requests.
+`fonts/JetBrainsMono-Regular.woff2` is JetBrains Mono, under the SIL Open Font License 1.1 (see `fonts/OFL.txt`). It is served from the container, so the page makes no third-party requests.
 
 ## License
 
-MIT, see `LICENSE`. The bundled font is under its own licence, see `OFL.txt`.
+MIT, see `LICENSE`. The bundled font is under its own licence, see `fonts/OFL.txt`.

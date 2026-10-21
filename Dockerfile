@@ -3,7 +3,7 @@ FROM nginx:alpine
 COPY nginx.conf /etc/nginx/nginx.conf
 COPY spirograph.html /usr/share/nginx/html/index.html
 # JetBrains Mono (SIL OFL 1.1), same file Dynacat serves
-COPY JetBrainsMono-Regular.woff2 /usr/share/nginx/html/
+COPY fonts/JetBrainsMono-Regular.woff2 /usr/share/nginx/html/
 
 USER nginx
 EXPOSE 8080

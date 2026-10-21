@@ -5,6 +5,6 @@ README.md
 .env.example
 deploy.sh
 docker-compose.yml
-OFL.txt
+fonts/OFL.txt
 .gitignore
 LICENSE
