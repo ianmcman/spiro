@@ -1,0 +1,15 @@
+{
+  "name": "Spirograph",
+  "short_name": "Spirograph",
+  "description": "Draw spirograph patterns and Fourier names.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#282923",
+  "theme_color": "#282923",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

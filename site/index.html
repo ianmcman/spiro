@@ -26,6 +26,10 @@
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
 <link rel="icon" href="favicon-32.png" sizes="32x32" type="image/png">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Spirograph">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
 <style>
 /* Dynacat (Glance) look with its Monokai theme: bg 70 8% 15%, contrast 1.1, primary 190 81% 67% */
 @font-face { font-family: 'JetBrains Mono'; font-style: normal; font-weight: 400; font-display: swap; src: url('JetBrainsMono-Regular.woff2') format('woff2'); }
@@ -1761,12 +1765,18 @@ function fileLabel() {
   s = s.replace(/[\\/:*?"<>|\x00-\x1f]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60) || 'Pattern';
   return s.charAt(0).toUpperCase() + s.slice(1) + ' - Spirograph';
 }
-function download(blob, ext) {
+async function download(blob, ext) {
   if (!blob) return;
+  // Phones: the share sheet, so pictures and videos can go straight to Photos. Anywhere it can't, a download.
+  const file = new File([blob], fileLabel() + '.' + ext, { type: blob.type.split(';')[0] });
+  if (window.matchMedia('(pointer: coarse)').matches && navigator.canShare && navigator.canShare({ files: [file] })) {
+    try { await navigator.share({ files: [file] }); return; }
+    catch (e) { if (e.name === 'AbortError') return; }   // cancelled; anything else (e.g. no user gesture left) downloads
+  }
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = fileLabel() + '.' + ext;
+  a.download = file.name;
   document.body.appendChild(a);
   a.click();
   a.remove();
@@ -1801,6 +1811,7 @@ function saveSVG() {
 }
 
 init();
+if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
 })();
 </script>
 </body>
