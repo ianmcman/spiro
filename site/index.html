@@ -42,13 +42,10 @@
   --field-border: hsl(70, 8%, 27%);
   --track: hsl(70, 8%, 26%);
   --text: hsl(70, 8%, 63.8%);
-  --text-muted: hsl(70, 8%, 57.2%);
   --text-hi: hsl(70, 8%, 93.5%);
   --text-sub: hsl(70, 8%, 38.5%);
   --primary: hsl(190, 81%, 67%);
   --positive: hsl(80, 76%, 53%);
-  --negative: hsl(338, 95%, 56%);
-  --yellow: #e6db74;
   --radius: 5px;
   --pad: 15px 17px;
 }
@@ -152,7 +149,6 @@ input[type=range]:active::-moz-range-thumb { background: var(--primary); }
 .readout dt { color: var(--text-sub); }
 .readout dd { margin: 0; text-align: right; color: var(--text-hi); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .readout dd.ok { color: var(--positive); }
-.readout dd.warn { color: var(--negative); }
 
 .fab { position: fixed; z-index: 30; display: none; right: max(15px, env(safe-area-inset-right)); bottom: max(15px, env(safe-area-inset-bottom)); background: var(--card); box-shadow: 0 3px 0 0 var(--card-shadow); }
 body:not(.open) .fab { display: block; }
@@ -526,10 +522,9 @@ function closure(Pr, Pw) {
     if (m < 1) continue;
     const err = Math.abs(x - m) / x;
     if (!best || err < best.err) best = { k, m, err };
-    if (err < 1e-3) return { k, m, err, found: true, ratio };
+    if (err < 1e-3) return { k, m };
   }
-  if (!best) best = { k: 1, m: 1, err: 1 };
-  return { k: best.k, m: best.m, err: best.err, found: false, ratio };
+  return best || { k: 1, m: 1 };
 }
 
 /* ------------------------------------------------------------------- state */
