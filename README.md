@@ -1,20 +1,108 @@
+<div align="center">
+
 # Spirograph
 
-Live at https://spiro.ianmcmanus.net
+**Draw spirograph patterns in the browser, then turn your name into a chain of spinning circles.**
+
+[**Open the app**](https://spiro.ianmcmanus.net) · [Features](#features) · [Controls](#controls) · [How it works](#how-it-works) · [Self-host](#run-locally)
 
 ![Rose window preset with the gallery open](docs/desktop-gallery.png)
 
-| Wheels shown while rolling | Phone |
+</div>
+
+One HTML file, no dependencies, no build step, no tracking, no server-side state. It runs on desktop and phones, installs to a home screen, and works offline.
+
+| Wheels shown while rolling | Second wheel | Name as epicycles |
+| --- | --- | --- |
+| ![Triangle wheel rolling inside a circle, wheels visible](docs/wheels.png) | ![Orbit preset: a second wheel riding the rolling wheel](docs/second-wheel.png) | ![The word Spirograph drawn by rotating circles](docs/name.png) |
+
+## Features
+
+### Spirograph mode
+
+- **11 shapes for both ring and wheel:** circle, ellipse, squircle, heart, rosette, triangle, square, pentagon, hexagon, star and burst, in any combination.
+- **Inside or outside** rolling, the same as the physical kit.
+- **Real gear sizing:** pick tooth counts from the classic kit (rings 96, 105, 144, 150; wheels 24 to 84) so patterns close the way real gears do, or size by percentage.
+- **Exact closure:** the app finds when the pen returns to its start and stops there. Patterns close with no visible seam.
+- **Corner-aware rolling:** a round wheel rolls round a sharp corner on a fillet instead of cutting through the ring. Wheels with corners pivot about each vertex, as a real gear would.
+- **Second wheel:** ride a smaller wheel on the rolling wheel, outside or inside, with its own size (1/2 to 1/12 of the wheel) and orbit speed (1x to 12x). The pen moves onto the second wheel. This gives orbiting-lobe patterns a normal kit can't make. Fit to screen shrinks the ring so the pen stays in view.
+- **Pen radius** from 0 to 150% of the wheel, so the pen can sit inside the wheel, on its edge, or beyond it.
+- **Layers:** Keep layer freezes the current pattern and the next one draws on top. Undo layer removes the last. Rotation turns the whole pattern for rotated copies across layers.
+- **Ink:** one solid Monokai colour per layer, or a colour cycle with an adjustable hue offset. Line weight 0.5 to 4.
+- **Gallery of 15 presets,** from the classic 96/52 to second-wheel patterns. Picking one draws it.
+- **Shuffle** picks a random combination of shapes, sizes, pen and colour, including long-running patterns and (one time in five) a second wheel.
+- **Hands-on drawing:** drag around the canvas to roll the wheel by hand. Drag backwards to erase.
+
+### Name mode
+
+Type a name and press Play. A chain of rotating circles (a Fourier series of the letter strokes) writes it out, drawn from the real outlines of JetBrains Mono.
+
+- Up to 80 characters.
+- Long text wraps onto several lines on portrait screens, sized to the screen.
+- The Circles slider sets how many circles draw the text, from 2 to 4000: a rough sketch at the low end, sharp letters at the high end.
+- Wheels shows the whole chain of circles and arms while it writes.
+
+### View and playback
+
+- Play, pause and speed from 0.05x to 8x.
+- Scroll or pinch to zoom up to 40x; Shift-drag, middle-drag or two fingers to pan. The pattern is redrawn crisp at the new zoom once you stop.
+- **Fit** frames the whole design, every layer included.
+- **Wheels** overlay shows the ring, the rolling wheel, the second wheel and the pen arm.
+- **Finish now** draws the rest of the pattern at once.
+
+### Sharing and export
+
+- **Link state:** every setting, including kept layers, lives in the URL hash. Reload keeps your work. **Copy link** shares it (the share sheet on phones).
+- **Save PNG:** every layer at up to 4096 px.
+- **Save SVG:** vector paths for print or pen plotters.
+- **Save JPG with link:** the design's link is written into the EXIF and XMP description. iPhone Photos shows it as the caption.
+- **Background choice** for PNG and SVG: dark, white or transparent.
+- **Never clipped:** exports grow to include a design that runs past the screen edge.
+- **Record video:** a 1080x1080 MP4 (WebM where MP4 recording isn't supported).
+- **Save GIF:** a looping 6 second 480x480 GIF of the whole drawing, encoded in the page.
+- On phones, saves go through the share sheet so pictures and videos reach Photos directly. Files are named after the design, for example `Rose window - Spirograph.png`.
+
+### App
+
+- **Installable:** add it to a home screen for a full-screen app with its own icon. A service worker caches it for offline use.
+- **Private:** no analytics, no cookies, no third-party requests. The font is bundled and the content security policy allows only the page's own files.
+- **Responsive:** a slide-over panel on phones, a sidebar on desktop.
+- **Editable readouts:** click the number beside any slider and type a value.
+- **SEO ready:** title, description, Open Graph and Twitter cards, structured data, sitemap and robots.txt.
+
+## Controls
+
+| Key | Action |
 | --- | --- |
-| ![Triangle wheel rolling inside a circle, wheels visible](docs/wheels.png) | ![Deep spiral preset on a phone](docs/phone.png) |
+| `Space` | Play / pause |
+| `W` | Show / hide wheels |
+| `-` / `+` | Slower / faster |
+| `D` | Draw the current settings |
+| `S` | Shuffle |
+| `K` | Keep layer |
+| `U` | Undo layer |
+| `C` | Clear all |
+| `F` | Finish now |
+| `0` | Fit the design |
 
-A single-file Spirograph generator. Plain HTML, CSS and vanilla JS. No dependencies, no build step, no server-side state.
+Settings changes don't redraw on their own: press Draw (or `D`). Gallery picks and Shuffle draw immediately.
 
-Settings are kept in the URL hash, so a reload keeps them and a copied link reproduces the pattern. Drag around the canvas to roll the wheel by hand; scroll or pinch to zoom, Shift-drag or two fingers to pan (0 or Fit frames the whole design). Record video restarts the drawing and saves it as a 1080x1080 MP4 (or WebM where MP4 recording isn't supported). Save GIF writes a looping 6 second 480x480 GIF of the whole drawing, encoded in the page. Keys: Space play/pause, W wheels, -/+ speed, D draw, S shuffle, K keep layer, U undo layer, C clear all. Each layer can use one solid Monokai ink or the colour cycle; Rotation turns the whole pattern, for rotated copies across layers. Save SVG writes vector paths for print or pen plotters. Size by Teeth uses the classic kit's tooth counts (rings 96, 105, 144, 150; wheels 24 to 84), so patterns close the way the physical gears do. Dragging backwards erases. Type a name and press Play: a chain of rotating circles (a Fourier series of the letter strokes) writes it out; the Circles slider sets how many (2 to 2000), from a rough sketch to sharp letters. The Gallery loads ready-made layered patterns, and kept layers are included in the link. "Keep layer" freezes the current pattern so the next one draws on top; Save PNG renders every layer at up to 4096 px. Save JPG with link writes the same picture with the pattern's link in the EXIF and XMP description (iPhone Photos shows it as the caption). Second wheel (Spirograph tab) rides a smaller wheel on the rolling wheel, outside or inside, for orbiting-lobe patterns on round wheels. Finish draws the rest at once, Copy link shares the pattern, Fit to screen shrinks the ring so a second wheel stays on screen, exports never clip the design, PNG and SVG can use a dark, white or transparent background, and long names wrap to lines on portrait screens (up to 80 characters).
+## How it works
 
-## Cloudflare Pages
+- **Geometry:** each shape is a closed polyline with cumulative arc length. The wheel rolls without slipping along the ring. The contact point, wheel centre and pen are computed per sample from arc length and turning angle, and the second wheel adds one more rotating frame.
+- **Closure:** the number of laps is the smallest `k` with `k * ring perimeter ~ m * wheel perimeter` to within 1e-3, so the curve ends where it began.
+- **Samples are computed lazily** as drawing reaches them, up to 250,000 per pattern. Zoom and pan scale the painted bitmaps during the gesture and restroke once it pauses.
+- **Names:** the text is rasterised in JetBrains Mono, thinned to one-pixel strokes (Zhang-Suen), walked line by line into a single path, then converted to Fourier coefficients with an FFT. Drawing sums the largest circles first; the Circles slider chooses how many.
+- **Exports:** PNG and SVG render from the pattern data, not from the screen. Video and GIF are rendered on a square canvas so every frame is framed the same on any device.
+- **Code layout:** everything is in `site/index.html`, plus a manifest, service worker, icons and the font.
 
-The live site is the `site/` directory published to Cloudflare Pages. `site/_headers` sets the same security headers as `nginx.conf`.
+## Browser support
+
+Current Chrome, Edge, Safari and Firefox. Video recording needs `MediaRecorder` and canvas capture; where a browser lacks them the button is disabled and everything else works.
+
+## Deploying (Cloudflare)
+
+The live site is the `site/` directory, served as static assets from Cloudflare; a push to `main` deploys it. `site/_headers` sets the same security headers as `nginx.conf`.
 
 ## Run locally
 
