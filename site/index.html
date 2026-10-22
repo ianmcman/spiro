@@ -79,7 +79,7 @@ body:not(.open) .panel { display: none; }
 .panel-body { overflow-y: auto; -webkit-overflow-scrolling: touch; flex: 1; padding: 8px 15px 23px; scrollbar-width: thin; scrollbar-color: var(--text-sub) transparent; }
 
 .widget { margin-top: 15px; }
-.widget-header { padding: 0 18px; margin-bottom: 0.9rem; font-size: 1.4rem; text-transform: uppercase; color: var(--text); }
+.widget-header { padding: 0 18px; margin: 0 0 0.9rem; font-size: 1.4rem; font-weight: 400; line-height: inherit; text-transform: uppercase; color: var(--text); }
 .card { background: var(--card); border: 1px solid var(--card-border); border-radius: var(--radius); box-shadow: 0 3px 0 0 var(--card-shadow); padding: var(--pad); }
 
 .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
@@ -230,7 +230,7 @@ body:not(.open) .fab { display: block; }
       </div>
 
       <section class="widget">
-        <div class="widget-header">Actions</div>
+        <h2 class="widget-header">Actions</h2>
         <div class="card">
           <div class="actions">
             <button type="button" class="btn primary" id="draw">Draw</button>
@@ -254,7 +254,7 @@ body:not(.open) .fab { display: block; }
       </section>
 
       <section class="widget name-only">
-        <div class="widget-header">Name</div>
+        <h2 class="widget-header">Name</h2>
         <div class="card">
           <label class="field"><span>Name or text</span><input type="text" class="text" id="text" maxlength="80" autocomplete="off" spellcheck="false" placeholder="e.g. Ada, 12 May 2026"></label>
           <label class="row" id="row-circles"><span class="lab">Circles</span><input type="range" id="circles" min="0" max="100" step="1"><input class="num" id="o-circles" type="text" inputmode="decimal" autocomplete="off" spellcheck="false" aria-label="Circles value"></label>
@@ -263,7 +263,7 @@ body:not(.open) .fab { display: block; }
       </section>
 
       <section class="widget spiro-only">
-        <div class="widget-header">Shapes</div>
+        <h2 class="widget-header">Shapes</h2>
         <div class="card">
           <div class="pair">
             <label class="field"><span>Ring (fixed)</span><select id="ringShape"></select></label>
@@ -278,7 +278,7 @@ body:not(.open) .fab { display: block; }
       </section>
 
       <section class="widget spiro-only">
-        <div class="widget-header">Sizes</div>
+        <h2 class="widget-header">Sizes</h2>
         <div class="card">
           <div class="seg first" id="sizing" role="radiogroup" aria-label="Size by">
             <button type="button" role="radio" aria-checked="true" data-sizing="pct">Percent</button>
@@ -297,7 +297,7 @@ body:not(.open) .fab { display: block; }
       </section>
 
       <section class="widget spiro-only">
-        <div class="widget-header">Second wheel</div>
+        <h2 class="widget-header">Second wheel</h2>
         <div class="card" id="card-second">
           <label class="check"><input type="checkbox" id="second"><span>Ride a second wheel on the wheel</span></label>
           <div id="second-body">
@@ -314,7 +314,7 @@ body:not(.open) .fab { display: block; }
       </section>
 
       <section class="widget">
-        <div class="widget-header">Appearance</div>
+        <h2 class="widget-header">Appearance</h2>
         <div class="card">
           <label class="field ink"><span>Ink</span><select id="ink"></select></label>
           <label class="row" id="row-hue"><span class="lab">Colour offset</span><input type="range" id="hue" min="0" max="360" step="1"><input class="num" id="o-hue" type="text" inputmode="decimal" autocomplete="off" spellcheck="false" aria-label="Colour offset value"></label>
@@ -325,7 +325,7 @@ body:not(.open) .fab { display: block; }
       </section>
 
       <section class="widget">
-        <div class="widget-header">Pattern</div>
+        <h2 class="widget-header">Pattern</h2>
         <div class="card readout" aria-live="polite">
           <dl>
             <div><dt>Closure</dt><dd id="r-closure">-</dd></div>
@@ -337,7 +337,7 @@ body:not(.open) .fab { display: block; }
       </section>
 
       <section class="widget spiro-only">
-        <div class="widget-header">Gallery</div>
+        <h2 class="widget-header">Gallery</h2>
         <div class="card"><div class="gallery" id="gallery"></div></div>
       </section>
 
