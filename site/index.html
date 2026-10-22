@@ -128,6 +128,8 @@ select option { background: var(--card); color: var(--text-hi); }
 @media (pointer: coarse) { .row .num:focus { font-size: 16px; } }
 .row input[type=range] { grid-area: rng; }
 .row.dim .lab, .row.dim .num { opacity: .45; }
+.card.dim, #second-body.dim { opacity: .45; }
+#w2side { margin-bottom: 8px; }
 
 input[type=range] { -webkit-appearance: none; appearance: none; width: 100%; height: 26px; margin: 0; background: transparent; cursor: pointer; touch-action: pan-y; }
 input[type=range]::-webkit-slider-runnable-track { height: 3px; border-radius: 2px; background: var(--track); }
@@ -286,6 +288,22 @@ body:not(.open) .fab { display: block; }
         </div>
       </section>
 
+      <section class="widget spiro-only">
+        <div class="widget-header">Second wheel</div>
+        <div class="card" id="card-second">
+          <label class="check"><input type="checkbox" id="second"><span>Ride a second wheel on the wheel</span></label>
+          <div id="second-body">
+            <div class="seg" id="w2side" role="radiogroup" aria-label="Second wheel side">
+              <button type="button" role="radio" aria-checked="false" data-w2side="outside">Outside</button>
+              <button type="button" role="radio" aria-checked="true" data-w2side="inside">Inside</button>
+            </div>
+            <label class="row"><span class="lab">Size (1/n of wheel)</span><input type="range" id="w2div" min="2" max="12" step="1"><input class="num" id="o-w2div" type="text" inputmode="decimal" autocomplete="off" spellcheck="false" aria-label="Second wheel size value"></label>
+            <label class="row"><span class="lab">Orbit speed</span><input type="range" id="w2speed" min="1" max="12" step="1"><input class="num" id="o-w2speed" type="text" inputmode="decimal" autocomplete="off" spellcheck="false" aria-label="Orbit speed value"></label>
+          </div>
+          <p class="note">The pen moves onto the second wheel; Pen radius sets its reach. Needs a round wheel.</p>
+        </div>
+      </section>
+
       <section class="widget">
         <div class="widget-header">Appearance</div>
         <div class="card">
@@ -383,7 +401,7 @@ const GEN = {
 // Closed CCW polyline: centred on its area centroid, scaled so max radius = R,
 // with cumulative arc length and a unit tangent per segment.
 // round > 0: corners turning the way `bend` says (+1 convex, -1 reflex) are rounded to that radius.
-function makeCurve(name, R, round = 0, bend = 1) {
+function makeCurve(name, R, round = 0, bend = 1, fw = FAST) {
   const raw = GEN[name]();
   const pts = [];
   for (const p of raw) {
@@ -417,7 +435,7 @@ function makeCurve(name, R, round = 0, bend = 1) {
   for (let i = 0; i < n; i++) { xs[i] = (pts[i][0] - cx) * k; ys[i] = (pts[i][1] - cy) * k; }
   let fast = null;
   if (round > 0) ({ xs, ys, fast } = fillet(xs, ys, round, bend));
-  return curveFrom(xs, ys, fast);
+  return curveFrom(xs, ys, fast, fw);
 }
 
 // A round wheel can't reach into a sharp corner: it touches both sides at once and the contact jumps across.
@@ -455,11 +473,11 @@ function fillet(xs, ys, rho, bend) {
   return { xs: Float64Array.from(ox), ys: Float64Array.from(oy), fast };
 }
 
-// fast[i]: segment i is a fillet arc, where the wheel holds still; the walk hurries across it (see nextSample).
 const FAST = 0.03;
-function curveFrom(xs, ys, fast) {
+// fast[i]: segment i is a fillet arc, where the wheel holds still; the walk hurries across it (see nextSample).
+function curveFrom(xs, ys, fast, fw) {
   const n = xs.length, wt = new Float64Array(n).fill(1);
-  if (fast) fast.forEach((f, i) => { if (f) wt[i] = FAST; });
+  if (fast) fast.forEach((f, i) => { if (f) wt[i] = fw; });
 
   const cum = new Float64Array(n + 1), tx = new Float64Array(n), ty = new Float64Array(n);
   for (let i = 0; i < n; i++) {
@@ -498,7 +516,7 @@ function locate(c, s) {
 // Roll the wheel along the ring without slipping. s = arc length along the ring.
 //  inside : wheel arc u = s,  outward normals coincide at contact
 //  outside: wheel arc u = -s, outward normals are opposite (psi + pi)
-const F = { px: 0, py: 0, wx: 0, wy: 0, rx: 0, ry: 0, cos: 1, sin: 0 };
+const F = { px: 0, py: 0, wx: 0, wy: 0, rx: 0, ry: 0, cos: 1, sin: 0, w2x: 0, w2y: 0 };
 // dpsi: extra rotation while pivoting about a vertex (see nextSample).
 function frame(m, s, dpsi) {
   locate(m.ring, s);
@@ -510,8 +528,18 @@ function frame(m, s, dpsi) {
   psi += dpsi;
   const c = Math.cos(psi), sn = Math.sin(psi);
   const wx = rx - dx * c + dy * sn, wy = ry - dx * sn - dy * c;  // wheel centre (wheel-frame origin)
-  F.px = wx + m.penX * c - m.penY * sn;
-  F.py = wy + m.penX * sn + m.penY * c;
+  let bx = m.penX, by = m.penY;                                 // the pen, in the wheel's own frame
+  const w2 = m.w2;
+  if (w2) {
+    // The second wheel's centre goes round the wheel (angle al, a whole-number multiple of the wheel's own
+    // rolling), and it rolls on the wheel's rim, which spins it by sgn * n * al; so everything closes with the pattern.
+    const al = w2.ratio * (m.inside ? s : -s) * TAU / m.wheel.P, th = w2.sgn * w2.n * al + w2.a;
+    const cx2 = w2.c * Math.cos(al), cy2 = w2.c * Math.sin(al);
+    bx = cx2 + w2.d * Math.cos(th); by = cy2 + w2.d * Math.sin(th);
+    F.w2x = wx + cx2 * c - cy2 * sn; F.w2y = wy + cx2 * sn + cy2 * c;
+  }
+  F.px = wx + bx * c - by * sn;
+  F.py = wy + bx * sn + by * c;
   F.wx = wx; F.wy = wy;
   F.rx = rx; F.ry = ry; F.cos = c; F.sin = sn;
 }
@@ -535,7 +563,8 @@ const P = {
   ringShape: 'circle', wheelShape: 'circle', side: 'inside',
   ring: 80, wheel: 35, pen: 80, angle: 0,
   rot: 0, ink: 'cycle', hue: 0, weight: 1.2, speed: 1, showWheels: false,
-  sizing: 'pct', ringTeeth: 96, wheelTeeth: 52, text: '', circles: 4000
+  sizing: 'pct', ringTeeth: 96, wheelTeeth: 52, text: '', circles: 4000,
+  second: false, w2side: 'outside', w2div: 3, w2speed: 1
 };
 const DEFAULTS = Object.assign({}, P);
 // Tooth counts from the classic Spirograph kit: two inner rings (96, 105), two outer (144, 150), and the wheels.
@@ -568,7 +597,13 @@ function geometry(p, half) {
   // A smooth wheel rolls round corners it can't reach into (see fillet); the sharp outline is what's drawn.
   // A wheel with vertices or flat edges really does pivot about a corner, so it keeps the sharp ring.
   // ponytail: rounds to the wheel's max radius, exact for round wheels
-  const smooth = SMOOTH.includes(p.wheelShape), roll = (a) => (smooth ? makeCurve(p.ringShape, ringR, a, inside ? 1 : -1) : outline);
+  const smooth = SMOOTH.includes(p.wheelShape);
+  // A second wheel (round wheels only) keeps moving while the wheel holds still on a fillet arc, so the walk
+  // can't hurry across it as much.
+  const w2on = p.second && p.wheelShape === 'circle', div = Math.round(p.w2div), ratio = Math.round(p.w2speed);
+  const w2n = w2on ? (p.w2side === 'inside' ? div - 1 : div + 1) : 0;
+  const fw = Math.min(1, FAST * (w2on ? 1 + ratio * (1 + w2n) : 1));
+  const roll = (a) => (smooth ? makeCurve(p.ringShape, ringR, a, inside ? 1 : -1, fw) : outline);
   let asked = size(outline.P), ring = roll(asked);
   if (smooth && p.sizing === 'teeth') { asked = size(ring.P); ring = roll(asked); }   // teeth mesh along the rolled path
   // No drift: rescale the wheel so k ring laps are exactly m wheel perimeters (perimeter scales linearly).
@@ -578,7 +613,12 @@ function geometry(p, half) {
   clo.snap = snap - 1;
   clo.ratio = ring.P / wheel.P;
   const a = p.angle * Math.PI / 180, d = p.pen / 100 * wheelR;
-  return { inside, ring, outline, wheel, ringR, wheelR, penX: d * Math.cos(a), penY: d * Math.sin(a), clo };
+  let w2 = null;
+  if (w2on) {
+    const r2 = wheelR / div, out = p.w2side === 'outside';
+    w2 = { r2, n: w2n, ratio, sgn: out ? 1 : -1, c: out ? wheelR + r2 : wheelR - r2, d: p.pen / 100 * r2, a };
+  }
+  return { inside, ring, outline, wheel, ringR, wheelR, penX: d * Math.cos(a), penY: d * Math.sin(a), w2, clo };
 }
 
 // p is the live settings object for the current pattern, or a frozen copy for a kept layer.
@@ -590,9 +630,10 @@ function buildModel(p, w = vw, h = vh, maxN = MAX_SAMPLES) {
   const { k } = m.clo;
   m.span = k * m.ring.P;
   // Samples are spaced evenly in arc length + LAMBDA * |rotation at vertices|, so corners get time to pivot.
-  m.lambda = m.wheelR + Math.hypot(m.penX, m.penY);
+  m.lambda = m.wheelR + (m.w2 ? m.w2.c + m.w2.d : Math.hypot(m.penX, m.penY));
   m.tau = m.span + m.lambda * (k * m.ring.T + m.clo.m * m.wheel.T);
   m.N = Math.min(maxN, Math.max(Math.min(3000, maxN), Math.round(k * 1500 * m.tau / m.span)));
+  if (m.w2) m.N = Math.min(maxN, Math.max(m.N, Math.round(60 * (1 + m.w2.n) * m.w2.ratio * m.clo.m)));   // samples per lobe of the second wheel
   m.walk = { s: 0, tau: 0, ri: 1, wi: m.inside ? 1 : 0, pend: 0, turn: 0, w: 0 };
   if (m.ring.fast) {                                   // fillets make the walk's length uneven: measure it
     nextSample(m, Infinity);
@@ -1068,8 +1109,14 @@ function drawWheels(ctx, i = drawn, zz = zoom.z, m = model) {
   ctx.stroke();
   // pen arm, wheel centre, pen point
   const px = m.cx + F.px, py = m.cy + F.py, wx = m.cx + F.wx, wy = m.cy + F.wy;
+  let ax = wx, ay = wy;                                    // the pen arm starts at the wheel that carries the pen
+  if (m.w2) {
+    ax = m.cx + F.w2x; ay = m.cy + F.w2y;
+    ctx.strokeStyle = 'rgba(174,129,255,0.9)';             // second wheel: purple
+    ctx.beginPath(); ctx.arc(ax, ay, m.w2.r2, 0, TAU); ctx.stroke();
+  }
   ctx.strokeStyle = 'rgba(230,219,116,0.9)';               // pen arm: yellow
-  ctx.beginPath(); ctx.moveTo(wx, wy); ctx.lineTo(px, py); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(px, py); ctx.stroke();
   ctx.fillStyle = 'rgba(102,217,239,0.9)';
   ctx.beginPath(); ctx.arc(wx, wy, 2.5 / zz, 0, TAU); ctx.fill();
   ctx.fillStyle = 'rgba(237,238,233,0.8)';
@@ -1163,6 +1210,8 @@ const SLIDERS = {
   pen:    { geo: true,  fmt: (v) => v + '%' },
   angle:  { geo: true,  fmt: (v) => v + '°' },
   rot:    { geo: true,  fmt: (v) => v + '°' },
+  w2div:   { geo: true,  fmt: (v) => '1/' + v },
+  w2speed: { geo: true,  fmt: (v) => v + 'x' },
   hue:    { geo: false, fmt: (v) => v },
   weight: { geo: false, fmt: (v) => Number(v).toFixed(1) + 'px' },
   speed:  { geo: false, fmt: (v) => Number(v).toFixed(2) + 'x' }
@@ -1176,6 +1225,10 @@ function syncUI() {
   $('ringShape').value = P.ringShape;
   $('wheelShape').value = P.wheelShape;
   $('showWheels').checked = P.showWheels;
+  $('second').checked = P.second;
+  $('second-body').classList.toggle('dim', !P.second);
+  $('card-second').classList.toggle('dim', P.wheelShape !== 'circle');
+  document.querySelectorAll('#w2side button').forEach((b) => b.setAttribute('aria-checked', String(b.dataset.w2side === P.w2side)));
   $('text').value = P.text;
   $('circles').value = sliderOf(P.circles);
   syncCircles();
@@ -1247,6 +1300,9 @@ const PRESETS = [
   { name: 'Star gear', layers: [{ ringShape: 'star', side: 'outside', wheel: 15, pen: 100, ring: 70, ink: 'cycle', hue: 60 }] },
   { name: 'Heart', layers: [Object.assign({ ringShape: 'heart', wheelTeeth: 30, pen: 75, ring: 92, ink: 'pink' }, T96)] },
   { name: 'Rosette lace', layers: [Object.assign({ ringShape: 'rosette', wheelShape: 'ellipse', wheelTeeth: 30, pen: 90, ring: 92, ink: 'cycle', hue: 120 }, T105)] },
+  { name: 'Orbit', layers: [Object.assign({ wheelTeeth: 45, ring: 90, pen: 110, ink: 'orange', second: true, w2side: 'inside', w2div: 3, w2speed: 2 }, T105)] },
+  { name: 'Satellites', layers: [Object.assign({ wheelTeeth: 40, ring: 90, pen: 120, ink: 'purple', second: true, w2side: 'inside', w2div: 6, w2speed: 3 }, T96)] },
+  { name: 'Moon lace', layers: [Object.assign({ wheelTeeth: 63, ring: 90, pen: 70, ink: 'yellow', second: true, w2side: 'outside', w2div: 3, w2speed: 2 }, T105)] },
   { name: 'Burst', layers: [Object.assign({ wheelShape: 'burst', wheelTeeth: 45, pen: 60, ring: 92, ink: 'purple' }, T105)] },
   { name: 'Squircle duo', layers: [
     { ringShape: 'squircle', wheelShape: 'squircle', side: 'outside', wheel: 25, pen: 90, ring: 60, ink: 'yellow' },
@@ -1304,7 +1360,7 @@ function paintGallery() {
 
 /* ------------------------------------------------------------- URL state */
 // Settings live in the URL hash, so a reload keeps them and a copied link reproduces the pattern.
-const KEYS = ['ringShape', 'wheelShape', 'side', 'ring', 'wheel', 'pen', 'angle', 'rot', 'ink', 'hue', 'weight', 'speed', 'showWheels', 'sizing', 'ringTeeth', 'wheelTeeth', 'text', 'circles'];
+const KEYS = ['ringShape', 'wheelShape', 'side', 'ring', 'wheel', 'pen', 'angle', 'rot', 'ink', 'hue', 'weight', 'speed', 'showWheels', 'sizing', 'ringTeeth', 'wheelTeeth', 'text', 'circles', 'second', 'w2side', 'w2div', 'w2speed'];
 // Validated copy of settings from untrusted text (URL). get(k) returns the string for key k, or null.
 function applyParams(t, get, keys) {
   for (const k of keys) {
@@ -1314,7 +1370,8 @@ function applyParams(t, get, keys) {
     else if (k === 'side') { if (v === 'inside' || v === 'outside') t.side = v; }
     else if (k === 'sizing') { if (v === 'pct' || v === 'teeth') t.sizing = v; }
     else if (k === 'ink') { if (Object.prototype.hasOwnProperty.call(INKS, v)) t.ink = v; }
-    else if (k === 'showWheels') t.showWheels = v === '1';
+    else if (k === 'showWheels' || k === 'second') t[k] = v === '1';
+    else if (k === 'w2side') { if (v === 'inside' || v === 'outside') t.w2side = v; }
     else if (k === 'text') t.text = v.slice(0, MAX_TEXT);
     else if (k === 'circles') { const n = parseInt(v, 10); if (n >= 2) t.circles = Math.min(4000, n); }
     else if (k === 'ringTeeth' || k === 'wheelTeeth') {
@@ -1328,7 +1385,7 @@ function applyParams(t, get, keys) {
   return t;
 }
 // Kept layers go in one 'layers' key: layers separated by '~', fields by ',' in LAYER_KEYS order.
-const LAYER_KEYS = ['ringShape', 'wheelShape', 'side', 'ring', 'wheel', 'pen', 'angle', 'rot', 'ink', 'hue', 'weight', 'sizing', 'ringTeeth', 'wheelTeeth', 'text', 'circles'];
+const LAYER_KEYS = ['ringShape', 'wheelShape', 'side', 'ring', 'wheel', 'pen', 'angle', 'rot', 'ink', 'hue', 'weight', 'sizing', 'ringTeeth', 'wheelTeeth', 'text', 'circles', 'second', 'w2side', 'w2div', 'w2speed'];
 // text is escaped so its commas and tildes can't split fields or layers
 const encText = (t) => encodeURIComponent(t).replace(/~/g, '%7E');
 const decText = (t) => { try { return decodeURIComponent(t); } catch (_) { return ''; } };
@@ -1339,7 +1396,7 @@ function loadState() {
   const enc = q.get('layers');
   if (enc) {
     layers = enc.split('~').map((str) => str.split(','))
-      .filter((f) => f.length >= LAYER_KEYS.length - 2 && f.length <= LAYER_KEYS.length)   // older links lack text and circles; drop anything else
+      .filter((f) => f.length >= 14 && f.length <= LAYER_KEYS.length)   // older links lack the later keys; drop anything else
       .slice(0, MAX_LAYERS)
       .map((f) => ({ p: applyParams(Object.assign({}, DEFAULTS), (k) => { const v = f[LAYER_KEYS.indexOf(k)]; return k === 'text' && v ? decText(v) : v; }, LAYER_KEYS) }));
   }
@@ -1347,7 +1404,7 @@ function loadState() {
 function stateHash() {
   const q = new URLSearchParams();
   for (const k of KEYS) q.set(k, typeof P[k] === 'boolean' ? (P[k] ? '1' : '0') : String(P[k]));
-  if (layers.length) q.set('layers', layers.map((l) => LAYER_KEYS.map((k) => (k === 'text' ? encText(l.p.text) : l.p[k])).join(',')).join('~'));
+  if (layers.length) q.set('layers', layers.map((l) => LAYER_KEYS.map((k) => (k === 'text' ? encText(l.p.text) : typeof l.p[k] === 'boolean' ? +l.p[k] : l.p[k])).join(',')).join('~'));
   return '#' + q.toString();
 }
 let saveTimer = 0;
@@ -1455,6 +1512,12 @@ function init() {
   }
   document.querySelectorAll('#side button').forEach((b) => b.addEventListener('click', () => {
     P.side = b.dataset.side;
+    syncUI();
+    geometryChanged();
+  }));
+  $('second').addEventListener('change', () => { P.second = $('second').checked; syncUI(); geometryChanged(); });
+  document.querySelectorAll('#w2side button').forEach((b) => b.addEventListener('click', () => {
+    P.w2side = b.dataset.w2side;
     syncUI();
     geometryChanged();
   }));
@@ -1653,6 +1716,14 @@ function shuffle() {
   let ring = rnd(40, 85);
   if (q.side === 'outside') ring = Math.min(ring, 96 / (1 + wf * (1 + Math.max(q.pen / 100, 1))));   // keep it on screen
   q.ring = Math.max(20, Math.round(ring));
+  q.second = Math.random() < 0.2;                       // one in five rides a second wheel
+  if (q.second) {
+    q.wheelShape = 'circle'; q.w2side = pick(['inside', 'outside']); q.w2div = 2 + (Math.random() * 7 | 0); q.w2speed = 1 + (Math.random() * 5 | 0);
+    q.pen = Math.min(q.pen, 110);
+    const half = Math.max(20, Math.min(vw, vh) / 2 - 6), g = geometry(q, half);
+    const reach = (g.inside ? g.ringR - g.wheelR : g.ringR + g.wheelR) + g.w2.c + g.w2.d;   // farthest the pen can get from the centre
+    if (reach > 0.95 * half) q.ring = Math.max(20, Math.floor(q.ring * 0.95 * half / reach));
+  }
   Object.assign(P, q, { hue: Math.round(rnd(0, 360)), weight: Math.round(rnd(0.8, 2.2) * 10) / 10 });
   syncUI();
   geometryChanged();
