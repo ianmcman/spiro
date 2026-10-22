@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://spiro.ianmcmanus.net/sitemap.xml
