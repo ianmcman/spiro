@@ -106,9 +106,11 @@ select option { background: var(--card); color: var(--text-hi); }
 .row { display: grid; grid-template-columns: 1fr auto; grid-template-areas: "lab val" "rng rng"; align-items: center; column-gap: 8px; padding: 2px 0; }
 .row + .row { margin-top: 4px; }
 .row .lab { grid-area: lab; color: var(--text); }
-.row output { grid-area: val; color: var(--text-hi); font-variant-numeric: tabular-nums; }
+.row .num { grid-area: val; width: 6ch; padding: 0 4px; margin-right: -5px; text-align: right; color: var(--text-hi); font-variant-numeric: tabular-nums; background: transparent; border: 1px solid transparent; border-bottom: 1px dashed var(--field-border); border-radius: 4px; }
+.row .num:hover, .row .num:focus { border: 1px solid var(--field-border); outline: none; }
+@media (pointer: coarse) { .row .num:focus { font-size: 16px; } }
 .row input[type=range] { grid-area: rng; }
-.row.dim .lab, .row.dim output { opacity: .45; }
+.row.dim .lab, .row.dim .num { opacity: .45; }
 
 input[type=range] { -webkit-appearance: none; appearance: none; width: 100%; height: 26px; margin: 0; background: transparent; cursor: pointer; touch-action: pan-y; }
 input[type=range]::-webkit-slider-runnable-track { height: 3px; border-radius: 2px; background: var(--track); }
@@ -222,7 +224,7 @@ body:not(.open) .fab { display: block; }
         <div class="widget-header">Name</div>
         <div class="card">
           <label class="field"><span>Name or text</span><input type="text" class="text" id="text" maxlength="40" autocomplete="off" spellcheck="false" placeholder="e.g. Ada, 12 May 2026"></label>
-          <label class="row" id="row-circles"><span class="lab">Circles</span><output id="o-circles"></output><input type="range" id="circles" min="0" max="100" step="1"></label>
+          <label class="row" id="row-circles"><span class="lab">Circles</span><input type="range" id="circles" min="0" max="100" step="1"><input class="num" id="o-circles" type="text" inputmode="decimal" autocomplete="off" spellcheck="false" aria-label="Circles value"></label>
           <p class="note">Press Play and a chain of rotating circles writes it out: a Fourier series of the letter strokes.</p>
         </div>
       </section>
@@ -253,11 +255,11 @@ body:not(.open) .fab { display: block; }
             <label class="field"><span>Ring teeth</span><select id="ringTeeth"></select></label>
             <label class="field"><span>Wheel teeth</span><select id="wheelTeeth"></select></label>
           </div>
-          <label class="row"><span class="lab">Ring size</span><output id="o-ring"></output><input type="range" id="ring" min="20" max="100" step="1"></label>
-          <label class="row" id="row-wheel"><span class="lab">Wheel size</span><output id="o-wheel"></output><input type="range" id="wheel" min="5" max="100" step="1"></label>
-          <label class="row"><span class="lab">Pen radius</span><output id="o-pen"></output><input type="range" id="pen" min="0" max="150" step="1"></label>
-          <label class="row" id="row-angle"><span class="lab">Pen angle</span><output id="o-angle"></output><input type="range" id="angle" min="0" max="360" step="1"></label>
-          <label class="row"><span class="lab">Rotation</span><output id="o-rot"></output><input type="range" id="rot" min="0" max="360" step="1"></label>
+          <label class="row"><span class="lab">Ring size</span><input type="range" id="ring" min="20" max="100" step="1"><input class="num" id="o-ring" type="text" inputmode="decimal" autocomplete="off" spellcheck="false" aria-label="Ring size value"></label>
+          <label class="row" id="row-wheel"><span class="lab">Wheel size</span><input type="range" id="wheel" min="5" max="100" step="1"><input class="num" id="o-wheel" type="text" inputmode="decimal" autocomplete="off" spellcheck="false" aria-label="Wheel size value"></label>
+          <label class="row"><span class="lab">Pen radius</span><input type="range" id="pen" min="0" max="150" step="1"><input class="num" id="o-pen" type="text" inputmode="decimal" autocomplete="off" spellcheck="false" aria-label="Pen radius value"></label>
+          <label class="row" id="row-angle"><span class="lab">Pen angle</span><input type="range" id="angle" min="0" max="360" step="1"><input class="num" id="o-angle" type="text" inputmode="decimal" autocomplete="off" spellcheck="false" aria-label="Pen angle value"></label>
+          <label class="row"><span class="lab">Rotation</span><input type="range" id="rot" min="0" max="360" step="1"><input class="num" id="o-rot" type="text" inputmode="decimal" autocomplete="off" spellcheck="false" aria-label="Rotation value"></label>
         </div>
       </section>
 
@@ -265,9 +267,9 @@ body:not(.open) .fab { display: block; }
         <div class="widget-header">Appearance</div>
         <div class="card">
           <label class="field ink"><span>Ink</span><select id="ink"></select></label>
-          <label class="row" id="row-hue"><span class="lab">Colour offset</span><output id="o-hue"></output><input type="range" id="hue" min="0" max="360" step="1"></label>
-          <label class="row"><span class="lab">Line weight</span><output id="o-weight"></output><input type="range" id="weight" min="0.5" max="4" step="0.1"></label>
-          <label class="row"><span class="lab">Draw speed</span><output id="o-speed"></output><input type="range" id="speed" min="0.05" max="8" step="0.05"></label>
+          <label class="row" id="row-hue"><span class="lab">Colour offset</span><input type="range" id="hue" min="0" max="360" step="1"><input class="num" id="o-hue" type="text" inputmode="decimal" autocomplete="off" spellcheck="false" aria-label="Colour offset value"></label>
+          <label class="row"><span class="lab">Line weight</span><input type="range" id="weight" min="0.5" max="4" step="0.1"><input class="num" id="o-weight" type="text" inputmode="decimal" autocomplete="off" spellcheck="false" aria-label="Line weight value"></label>
+          <label class="row"><span class="lab">Draw speed</span><input type="range" id="speed" min="0.05" max="8" step="0.05"><input class="num" id="o-speed" type="text" inputmode="decimal" autocomplete="off" spellcheck="false" aria-label="Draw speed value"></label>
           <label class="check"><input type="checkbox" id="showWheels"><span>Show wheels</span></label>
         </div>
       </section>
@@ -1036,7 +1038,7 @@ const SLIDERS = {
 function syncUI() {
   for (const id in SLIDERS) {
     $(id).value = P[id];
-    $('o-' + id).textContent = SLIDERS[id].fmt(P[id]);
+    showNum(id, SLIDERS[id].fmt(P[id]));
   }
   $('ringShape').value = P.ringShape;
   $('wheelShape').value = P.wheelShape;
@@ -1060,8 +1062,15 @@ function syncUI() {
   $('row-hue').classList.toggle('dim', P.ink !== 'cycle');
 }
 
+// Slider readouts are text boxes: type a number, Enter or tap away to apply, Esc to cancel.
+function showNum(id, v) {
+  const o = $('o-' + id);
+  if (document.activeElement === o) return;
+  o.value = v;
+  o.style.width = 'calc(' + Math.max(3, String(v).length) + 'ch + 12px)';
+}
 function syncCircles() {
-  $('o-circles').textContent = model && model.fourier ? model.K : P.circles;
+  showNum('circles', model && model.fourier ? model.K : P.circles);
   $('row-circles').classList.toggle('dim', !P.text.trim());
 }
 
@@ -1268,7 +1277,7 @@ function init() {
   for (const id in SLIDERS) {
     $(id).addEventListener('input', () => {
       P[id] = parseFloat($(id).value);
-      $('o-' + id).textContent = SLIDERS[id].fmt(P[id]);
+      showNum(id, SLIDERS[id].fmt(P[id]));
       if (SLIDERS[id].geo) geometryChanged();
       else if (id === 'hue' || id === 'weight') { needRepaint = true; schedule(); }
       else if (id === 'speed') $('q-speed').textContent = SLIDERS.speed.fmt(P.speed);
@@ -1308,6 +1317,31 @@ function init() {
     syncCircles();
     schedule();
   });
+  for (const id of [...Object.keys(SLIDERS), 'circles']) {
+    const o = $('o-' + id), range = $(id), raw = () => id === 'circles' ? P.circles : P[id];
+    let cancel = false;
+    o.addEventListener('focus', () => { o.value = raw(); o.style.width = 'calc(6ch + 12px)'; o.select(); });
+    o.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') o.blur();
+      else if (e.key === 'Escape') { cancel = true; o.blur(); }
+    });
+    o.addEventListener('blur', () => {
+      const v = parseFloat(o.value.replace(',', '.'));
+      if (!cancel && isFinite(v) && v !== raw()) {
+        if (id === 'circles') {
+          P.circles = Math.round(Math.min(2000, Math.max(2, v)));
+          range.value = sliderOf(P.circles);
+          needCircles = true;
+          schedule();
+        } else {
+          range.value = v;                                        // the range clamps and snaps it to its step
+          range.dispatchEvent(new Event('input'));
+        }
+      }
+      cancel = false;
+      if (id === 'circles') syncCircles(); else showNum(id, SLIDERS[id].fmt(P[id]));
+    });
+  }
   let textTimer = 0;
   $('text').addEventListener('input', () => {
     clearTimeout(textTimer);
