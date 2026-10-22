@@ -66,6 +66,7 @@ body:not(.open) .panel { display: none; }
 .note { margin: 10px 0 0; }
 .ink { margin-bottom: 10px; }
 .hidden { display: none !important; }
+.panel:not(.name-mode) .name-only, .panel.name-mode .spiro-only { display: none; }
 .foot { margin: 23px 18px 0; font-size: 1.1rem; color: var(--text-sub); }
 .foot a { color: var(--text); text-decoration: none; border-bottom: 1px solid var(--field-border); }
 .foot a:hover { color: var(--primary); border-color: var(--primary); }
@@ -200,6 +201,11 @@ body:not(.open) .fab { display: block; }
     </header>
 
     <div class="panel-body">
+      <div class="seg first" id="mode" role="radiogroup" aria-label="Mode">
+        <button type="button" role="radio" aria-checked="true" data-mode="spiro">Spirograph</button>
+        <button type="button" role="radio" aria-checked="false" data-mode="name">Name</button>
+      </div>
+
       <section class="widget">
         <div class="widget-header">Actions</div>
         <div class="card">
@@ -220,7 +226,7 @@ body:not(.open) .fab { display: block; }
         </div>
       </section>
 
-      <section class="widget">
+      <section class="widget name-only">
         <div class="widget-header">Name</div>
         <div class="card">
           <label class="field"><span>Name or text</span><input type="text" class="text" id="text" maxlength="40" autocomplete="off" spellcheck="false" placeholder="e.g. Ada, 12 May 2026"></label>
@@ -229,7 +235,7 @@ body:not(.open) .fab { display: block; }
         </div>
       </section>
 
-      <section class="widget">
+      <section class="widget spiro-only">
         <div class="widget-header">Shapes</div>
         <div class="card">
           <div class="pair">
@@ -244,7 +250,7 @@ body:not(.open) .fab { display: block; }
         </div>
       </section>
 
-      <section class="widget">
+      <section class="widget spiro-only">
         <div class="widget-header">Sizes</div>
         <div class="card">
           <div class="seg first" id="sizing" role="radiogroup" aria-label="Size by">
@@ -286,7 +292,7 @@ body:not(.open) .fab { display: block; }
         </div>
       </section>
 
-      <section class="widget">
+      <section class="widget spiro-only">
         <div class="widget-header">Gallery</div>
         <div class="card"><div class="gallery" id="gallery"></div></div>
       </section>
@@ -1060,6 +1066,7 @@ function syncUI() {
   $('ringTeeth').value = P.ringTeeth;
   $('wheelTeeth').value = P.wheelTeeth;
   $('row-hue').classList.toggle('dim', P.ink !== 'cycle');
+  if (P.text.trim()) setMode('name');
 }
 
 // Slider readouts are text boxes: type a number, Enter or tap away to apply, Esc to cancel.
@@ -1228,7 +1235,17 @@ const PHONE_Q = '(max-width: 639px), (orientation: landscape) and (max-height: 4
 function setOpen(o) { document.body.classList.toggle('open', o); if (o) paintGallery(); }
 
 // Any other way of setting the pattern replaces a name.
-function dropText() { if (P.text) { P.text = ''; $('text').value = ''; } }
+// The panel shows one mode's controls; the Name tab keeps the last name to bring back.
+let mode = 'spiro', lastText = '';
+function setMode(m) {
+  mode = m;
+  $('panel').classList.toggle('name-mode', m === 'name');
+  document.querySelectorAll('#mode button').forEach((b) => b.setAttribute('aria-checked', String(b.dataset.mode === m)));
+}
+function dropText() {
+  if (P.text) { lastText = P.text; P.text = ''; $('text').value = ''; }
+  setMode('spiro');
+}
 function geometryChanged(keepText) { if (!keepText) { dropText(); presetName = ''; } needRebuild = true; paused = true; schedule(); }
 
 function syncPlay() {
@@ -1342,6 +1359,15 @@ function init() {
       if (id === 'circles') syncCircles(); else showNum(id, SLIDERS[id].fmt(P[id]));
     });
   }
+  document.querySelectorAll('#mode button').forEach((b) => b.addEventListener('click', () => {
+    const m = b.dataset.mode;
+    if (m === mode) return;
+    if (m === 'spiro') geometryChanged();              // drops the name
+    else {
+      setMode('name');
+      if (lastText) { P.text = lastText; syncUI(); geometryChanged(true); }
+    }
+  }));
   let textTimer = 0;
   $('text').addEventListener('input', () => {
     clearTimeout(textTimer);
