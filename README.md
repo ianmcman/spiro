@@ -52,7 +52,7 @@ Type a name and press Play. A chain of rotating circles (a Fourier series of the
 
 ### Sharing and export
 
-- **Link state:** every setting, including kept layers, lives in the URL hash. Reload keeps your work. **Copy link** shares it (the share sheet on phones).
+- **Link state:** every setting, including kept layers, lives in the URL hash as a short packed code (`#p=...`, only what differs from the defaults). Reload keeps your work. **Copy link** shares it (the share sheet on phones). Older long links still open.
 - **Save PNG:** every layer at up to 4096 px.
 - **Save SVG:** vector paths for print or pen plotters.
 - **Save JPG with link:** the design's link is written into the EXIF and XMP description. iPhone Photos shows it as the caption.
