@@ -234,6 +234,7 @@ body:not(.open) .fab { display: block; }
             <label class="field wide"><span>PNG / SVG background</span><select id="bg"><option value="#282923">Dark</option><option value="">Transparent</option><option value="#ffffff">White</option></select></label>
             <button type="button" class="btn" id="save">Save PNG</button>
             <button type="button" class="btn" id="svg">Save SVG</button>
+            <button type="button" class="btn wide" id="jpg">Save JPG with link</button>
             <button type="button" class="btn" id="record">Record video</button>
             <button type="button" class="btn" id="gif">Save GIF</button>
             <button type="button" class="btn" id="finish">Finish now</button>
@@ -1690,6 +1691,7 @@ function init() {
   $('record').addEventListener('click', toggleRecord);
   $('gif').addEventListener('click', saveGIF);
   $('save').addEventListener('click', savePNG);
+  $('jpg').addEventListener('click', saveJPG);
   $('w2fit').addEventListener('click', () => { fitReach(P); syncUI(); geometryChanged(); });
 
   // panel: hidden on phones, open on desktop
@@ -1939,18 +1941,44 @@ function exportRegion() {
 }
 
 // Renders every layer plus the whole current pattern at up to 4096 px on the long side.
-function savePNG() {
-  if (!model) return;
+function renderExport(bg) {
   const R = exportRegion(), scale = Math.max(dpr, Math.min(4, 4096 / Math.max(R.w, R.h)));
   const out = document.createElement('canvas');
   out.width = Math.round(R.w * scale); out.height = Math.round(R.h * scale);
   const octx = out.getContext('2d');
-  if ($('bg').value) { octx.fillStyle = $('bg').value; octx.fillRect(0, 0, out.width, out.height); }
+  if (bg) { octx.fillStyle = bg; octx.fillRect(0, 0, out.width, out.height); }
   prepCtx(octx, scale);
   octx.translate(-R.x0, -R.y0);
   for (const l of layers) strokeRange(octx, l, 0, l.N);
   strokeRange(octx, model, 0, N);
-  out.toBlob((blob) => download(blob, 'png'), 'image/png');
+  return out;
+}
+function savePNG() {
+  if (model) renderExport($('bg').value).toBlob((blob) => download(blob, 'png'), 'image/png');
+}
+
+// JPEG with the design's link in EXIF ImageDescription and XMP dc:description; iPhone Photos shows it as the caption.
+function addLink(jpeg, url) {
+  const te = new TextEncoder(), desc = te.encode(url + '\0'), tiff = new Uint8Array(26 + desc.length), dv = new DataView(tiff.buffer);
+  tiff.set([0x49, 0x49, 42, 0]); dv.setUint32(4, 8, true);
+  dv.setUint16(8, 1, true);                                                       // IFD0: one entry
+  dv.setUint16(10, 0x010E, true); dv.setUint16(12, 2, true); dv.setUint32(14, desc.length, true); dv.setUint32(18, 26, true);
+  tiff.set(desc, 26);
+  const esc = url.replace(/&/g, '&amp;').replace(/</g, '&lt;');
+  const xmp = '<?xpacket begin="\uFEFF" id="W5M0MpCehiHzreSzNTczkc9d"?><x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">' +
+    '<rdf:Description xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:description><rdf:Alt><rdf:li xml:lang="x-default">' + esc + '</rdf:li></rdf:Alt></dc:description></rdf:Description></rdf:RDF></x:xmpmeta><?xpacket end="w"?>';
+  const seg = (head, body) => {
+    const h = te.encode(head), n = 2 + h.length + body.length, o = new Uint8Array(2 + n);
+    o.set([0xFF, 0xE1, n >> 8, n & 255]); o.set(h, 4); o.set(body, 4 + h.length);
+    return o;
+  };
+  return new Blob([jpeg.slice(0, 2), seg('Exif\0\0', tiff), seg('http://ns.adobe.com/xap/1.0/\0', te.encode(xmp)), jpeg.slice(2)], { type: 'image/jpeg' });
+}
+async function saveJPG() {
+  if (!model) return;
+  const url = location.origin + location.pathname + stateHash();
+  const blob = await new Promise((res) => renderExport($('bg').value || '#282923').toBlob(res, 'image/jpeg', 0.95));   // no alpha in JPEG
+  download(blob.size && url.length < 30000 ? addLink(new Uint8Array(await blob.arrayBuffer()), url) : blob, 'jpg');
 }
 
 // "Ian - Spirograph", "Rose window - Spirograph", "Circle inside circle 105-40 - Spirograph"
