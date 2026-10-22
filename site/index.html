@@ -323,6 +323,7 @@ body:not(.open) .fab { display: block; }
 'use strict';
 
 const TAU = Math.PI * 2;
+const SMOOTH = ['circle', 'ellipse', 'squircle', 'rosette'];   // shapes with no corners
 const SHAPES = ['circle', 'ellipse', 'squircle', 'heart', 'rosette', 'triangle', 'square', 'pentagon', 'hexagon', 'star', 'burst'];
 const CHUNK = 48;                 // samples per stroke chunk
 const MAX_SAMPLES = 250000;
@@ -562,10 +563,12 @@ function geometry(p, half) {
   // Teeth: the wheel's perimeter is ring perimeter * wheel teeth / ring teeth, as with meshing gears.
   const unitP = makeCurve(p.wheelShape, 1).P;
   const size = (ringP) => Math.min(p.sizing === 'teeth' ? ringP * p.wheelTeeth / p.ringTeeth / unitP : ringR * p.wheel / 100, ringR * (inside ? INSIDE_CAP : 1));
-  // The wheel rolls round corners it can't reach into (see fillet); the sharp outline is what's drawn.
+  // A smooth wheel rolls round corners it can't reach into (see fillet); the sharp outline is what's drawn.
+  // A wheel with vertices or flat edges really does pivot about a corner, so it keeps the sharp ring.
   // ponytail: rounds to the wheel's max radius, exact for round wheels
-  let asked = size(outline.P), ring = makeCurve(p.ringShape, ringR, asked, inside ? 1 : -1);
-  if (p.sizing === 'teeth') { asked = size(ring.P); ring = makeCurve(p.ringShape, ringR, asked, inside ? 1 : -1); }   // teeth mesh along the rolled path
+  const smooth = SMOOTH.includes(p.wheelShape), roll = (a) => (smooth ? makeCurve(p.ringShape, ringR, a, inside ? 1 : -1) : outline);
+  let asked = size(outline.P), ring = roll(asked);
+  if (smooth && p.sizing === 'teeth') { asked = size(ring.P); ring = roll(asked); }   // teeth mesh along the rolled path
   // No drift: rescale the wheel so k ring laps are exactly m wheel perimeters (perimeter scales linearly).
   const clo = closure(ring.P, makeCurve(p.wheelShape, asked).P);
   const snap = (clo.k * ring.P / clo.m) / unitP / asked;
@@ -876,6 +879,7 @@ function nameTerms(lines) {
     M: NAME_M, c0r, c0i, up, rx, ry, mx: (x0 + x1) / 2, my: (y0 + y1) / 2, bw: Math.max(1, x1 - x0), bh: Math.max(1, y1 - y0)
   };
   nameCache.set(key, T);
+  if (nameCache.size > 8) nameCache.delete(nameCache.keys().next().value);   // typing makes one entry per keystroke
   return T;
 }
 
@@ -1217,7 +1221,6 @@ function updateReadout() {
   const pct = Math.abs(c.snap) * 100;
   ex.textContent = 'exact' + (pct >= 0.0005 ? ', wheel ' + (c.snap > 0 ? '+' : '-') + pct.toFixed(3) + '% to close' : '');
   ex.className = 'ok';
-  $('r-layers').textContent = layers.length ? layers.length + ' kept' : 'none';
   $('r-ratio').textContent = c.ratio.toFixed(4) + '  (' + model.ring.P.toFixed(0) + ' / ' + model.wheel.P.toFixed(0) + ')';
 }
 
@@ -1367,7 +1370,7 @@ function dropText() {
   if (P.text) { lastText = P.text; P.text = ''; $('text').value = ''; }
   setMode('spiro');
 }
-function geometryChanged(keepText) { if (!keepText) { dropText(); presetName = ''; } needRebuild = true; paused = true; schedule(); }
+function geometryChanged(keepText) { if (rec && rec.state !== 'inactive') rec.stop(); if (!keepText) { dropText(); presetName = ''; } needRebuild = true; paused = true; schedule(); }
 
 function syncPlay() {
   const playing = !paused && drawn < N;
@@ -1594,6 +1597,7 @@ function init() {
     const t = e.target instanceof Element ? e.target : document.body;
     if (e.ctrlKey || e.metaKey || e.altKey || t.closest('input, select')) return;
     if (e.key === ' ' && t.closest('button')) return;     // a focused button already handles Space
+    if (!e.key) return;
     const act = {
       ' ': togglePlay, w: () => $('q-wheels').click(), '-': () => stepSpeed(-1), '+': () => stepSpeed(1), '=': () => stepSpeed(1),
       d: () => $('draw').click(), s: shuffle, c: () => $('clear').click(), k: keepLayer, u: undoLayer, 0: () => $('q-fit').click()
@@ -1638,6 +1642,7 @@ function toggleRecord() {
   if (rec) { rec.stop(); return; }
   if (!model) return;
   const type = ['video/mp4;codecs=avc1', 'video/mp4', 'video/webm;codecs=vp9', 'video/webm'].find((t) => MediaRecorder.isTypeSupported(t));
+  const label = fileLabel();                           // named for what was recorded, not whatever it is when it stops
   recR = squareRenderer(VIDEO_SIZE);
   recR.draw(0);
   const stream = recR.canvas.captureStream(60), chunks = [];
@@ -1646,7 +1651,7 @@ function toggleRecord() {
   rec.onstop = () => {
     stream.getTracks().forEach((t) => t.stop());
     const t = rec.mimeType || type || 'video/webm';
-    download(new Blob(chunks, { type: t }), t.startsWith('video/mp4') ? 'mp4' : 'webm');
+    download(new Blob(chunks, { type: t }), t.startsWith('video/mp4') ? 'mp4' : 'webm', label);
     rec = recR = null; clearTimeout(recEnd); recEnd = 0;
     $('record').textContent = 'Record video'; $('record').classList.remove('primary');
   };
@@ -1689,7 +1694,11 @@ let gifBusy = false;
 async function saveGIF() {
   if (!model || gifBusy) return;
   gifBusy = true;
-  const btn = $('gif'), R = squareRenderer(GIF_SIZE), n = R.n, W = GIF_SIZE, H = GIF_SIZE;
+  const btn = $('gif');
+  try { await makeGIF(btn); } finally { btn.textContent = 'Save GIF'; gifBusy = false; }
+}
+async function makeGIF(btn) {
+  const label = fileLabel(), R = squareRenderer(GIF_SIZE), n = R.n, W = GIF_SIZE, H = GIF_SIZE;
   const frameAt = (i) => { R.draw(i); return R.pixels(); };
   // Palette: the 255 most common colours (15-bit bins, averaged) of the finished picture plus one frame with
   // the circles or wheels, background always included; a lookup table maps any colour to its nearest entry.
@@ -1748,9 +1757,7 @@ async function saveGIF() {
     await new Promise((res) => setTimeout(res));                   // keep the page responsive
   }
   chunks.push(new Uint8Array([0x3B]));
-  download(new Blob(chunks, { type: 'image/gif' }), 'gif');
-  btn.textContent = 'Save GIF';
-  gifBusy = false;
+  download(new Blob(chunks, { type: 'image/gif' }), 'gif', label);
 }
 
 // GIF's variable-width LZW (8-bit pixels: codes start at 9 bits, clear = 256, end = 257), in 255-byte sub-blocks.
@@ -1806,10 +1813,10 @@ function fileLabel() {
   s = s.replace(/[\\/:*?"<>|\x00-\x1f]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60) || 'Pattern';
   return s.charAt(0).toUpperCase() + s.slice(1) + ' - Spirograph';
 }
-async function download(blob, ext) {
+async function download(blob, ext, label = fileLabel()) {
   if (!blob) return;
   // Phones: the share sheet, so pictures and videos can go straight to Photos. Anywhere it can't, a download.
-  const file = new File([blob], fileLabel() + '.' + ext, { type: blob.type.split(';')[0] });
+  const file = new File([blob], label + '.' + ext, { type: blob.type.split(';')[0] });
   if (window.matchMedia('(pointer: coarse)').matches && navigator.canShare && navigator.canShare({ files: [file] })) {
     try { await navigator.share({ files: [file] }); return; }
     catch (e) { if (e.name === 'AbortError') return; }   // cancelled; anything else (e.g. no user gesture left) downloads
