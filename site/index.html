@@ -1414,7 +1414,9 @@ function loadState() {
 }
 function stateHash() {
   const q = new URLSearchParams();
-  for (const k of KEYS) q.set(k, typeof P[k] === 'boolean' ? (P[k] ? '1' : '0') : String(P[k]));
+  // Short links: leave out settings at their default, and the ones the current mode doesn't use.
+  const named = !!P.text, skip = (k) => named ? !['text', 'circles', 'ink', 'hue', 'weight', 'speed', 'showWheels'].includes(k) : k === 'text' || k === 'circles' || (/^w2/.test(k) && !P.second);
+  for (const k of KEYS) if (P[k] !== DEFAULTS[k] && !skip(k)) q.set(k, typeof P[k] === 'boolean' ? (P[k] ? '1' : '0') : String(P[k]));
   if (layers.length) q.set('layers', layers.map((l) => LAYER_KEYS.map((k) => (k === 'text' ? encText(l.p.text) : typeof l.p[k] === 'boolean' ? +l.p[k] : l.p[k])).join(',')).join('~'));
   return '#' + q.toString();
 }
