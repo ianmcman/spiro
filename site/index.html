@@ -549,6 +549,10 @@ let needRebuild = false, needRepaint = false, needCircles = false, needView = fa
 // Zoom and pan: screen = world * z + (x, y), in CSS px. Trace and layers are re-stroked at the new transform
 // (crisp at any zoom, lines keep their on-screen width); exports ignore it.
 const zoom = { z: 1, x: 0, y: 0 };
+// The view the trace and base bitmaps were stroked at. During a zoom or pan they are just scaled (cheap, a bit
+// soft); once the gesture pauses everything is stroked again at the new view (dense patterns have 250k segments).
+const paintView = { z: 1, x: 0, y: 0 };
+let viewAt = 0, viewPending = false;
 
 const $ = (id) => document.getElementById(id);
 const view = $('view'), vctx = view.getContext('2d');
@@ -951,7 +955,12 @@ function strokeRange(ctx, m, i0, i1) {
   for (let i = i0; i < i1; i += CHUNK) strokeChunk(ctx, m, i, Math.min(i1, i + CHUNK));
 }
 function viewTransform() {
-  for (const c of [tctx, bctx]) { c.setTransform(dpr * zoom.z, 0, 0, dpr * zoom.z, dpr * zoom.x, dpr * zoom.y); c.z = zoom.z; }
+  for (const c of [tctx, bctx]) { c.setTransform(dpr * paintView.z, 0, 0, dpr * paintView.z, dpr * paintView.x, dpr * paintView.y); c.z = paintView.z; }
+}
+function commitView() {
+  viewPending = false;
+  Object.assign(paintView, zoom);
+  viewTransform(); paintBase(); needRepaint = true;
 }
 function prepCtx(ctx, scale) {
   ctx.setTransform(scale, 0, 0, scale, 0, 0);
@@ -1073,6 +1082,8 @@ function render() {
   vctx.setTransform(1, 0, 0, 1, 0, 0);
   vctx.fillStyle = '#282923';                               // painted, not transparent, so recorded video has the background
   vctx.fillRect(0, 0, view.width, view.height);
+  const k = zoom.z / paintView.z;                           // bitmaps are one gesture behind: map them onto the live view
+  vctx.setTransform(k, 0, 0, k, dpr * (zoom.x - k * paintView.x), dpr * (zoom.y - k * paintView.y));
   vctx.drawImage(base, 0, 0);
   vctx.drawImage(trace, 0, 0);
   vctx.setTransform(dpr * zoom.z, 0, 0, dpr * zoom.z, dpr * zoom.x, dpr * zoom.y);
@@ -1100,14 +1111,15 @@ function tick() {
     needCircles = false;
     if (model && model.fourier) { model = buildModel(P); needRepaint = true; updateReadout(); }
   }
-  if (needView) { needView = false; viewTransform(); paintBase(); needRepaint = true; $('q-fit').classList.toggle('hidden', zoom.z === 1 && !zoom.x && !zoom.y); }
+  if (needView) { needView = false; viewPending = true; viewAt = performance.now(); $('q-fit').classList.toggle('hidden', zoom.z === 1 && !zoom.x && !zoom.y); }
+  if (viewPending && performance.now() - viewAt > 150) commitView();
   if (needRepaint) { needRepaint = false; repaintTrace(); }
   if (model && !paused && drawn < N) advance();
   render();
   syncPlay();
   if (recR) recR.draw(Math.round(drawn * recR.n / N));                                         // square video frame
   if (rec && drawn >= N && !recEnd) recEnd = setTimeout(() => { if (rec) rec.stop(); }, 1500);   // hold the finished picture, then save
-  if ((model && !paused && drawn < N) || rec) schedule();                                          // recording needs a frame every tick
+  if ((model && !paused && drawn < N) || rec || viewPending) schedule();                                          // recording needs a frame every tick
 }
 
 /* ------------------------------------------------------------------ resize */
@@ -1121,6 +1133,7 @@ function resize() {
   view.height = trace.height = base.height = Math.max(1, Math.round(h * d));
   prepCtx(tctx, dpr);
   prepCtx(bctx, dpr);
+  viewPending = false; Object.assign(paintView, zoom);
   viewTransform();
   rebuildLayers();
   paintGallery();
@@ -1604,24 +1617,19 @@ function shuffle() {
   dropText();
   const pick = (a) => a[Math.random() * a.length | 0];
   const rnd = (a, b) => a + Math.random() * (b - a);
-  const half = Math.max(20, Math.min(vw, vh) / 2 - 6);
   const q = Object.assign({}, P);
-  // try a few random combinations and keep the first that closes within a reasonable lap count
-  for (let t = 0; t < 30; t++) {
-    q.ringShape = pick(SHAPES);
-    q.wheelShape = pick(SHAPES);
-    q.side = Math.random() < 0.5 ? 'inside' : 'outside';
-    const wf = rnd(0.12, q.side === 'inside' ? 0.7 : 0.55);
-    q.wheel = Math.round(wf * 100);
-    q.ringTeeth = pick(RING_TEETH);
-    q.wheelTeeth = pick(WHEEL_TEETH);
-    q.pen = Math.round(rnd(30, 140));
-    q.angle = Math.round(rnd(0, 360));
-    let ring = rnd(40, 85);
-    if (q.side === 'outside') ring = Math.min(ring, 96 / (1 + wf * (1 + Math.max(q.pen / 100, 1))));   // keep it on screen
-    q.ring = Math.max(20, Math.round(ring));
-    if (geometry(q, half).clo.k <= 30) break;
-  }
+  q.ringShape = pick(SHAPES);
+  q.wheelShape = pick(SHAPES);
+  q.side = Math.random() < 0.5 ? 'inside' : 'outside';
+  const wf = rnd(0.12, q.side === 'inside' ? 0.7 : 0.55);
+  q.wheel = Math.round(wf * 100);
+  q.ringTeeth = pick(RING_TEETH);
+  q.wheelTeeth = pick(WHEEL_TEETH);
+  q.pen = Math.round(rnd(30, 140));
+  q.angle = Math.round(rnd(0, 360));
+  let ring = rnd(40, 85);
+  if (q.side === 'outside') ring = Math.min(ring, 96 / (1 + wf * (1 + Math.max(q.pen / 100, 1))));   // keep it on screen
+  q.ring = Math.max(20, Math.round(ring));
   Object.assign(P, q, { hue: Math.round(rnd(0, 360)), weight: Math.round(rnd(0.8, 2.2) * 10) / 10 });
   syncUI();
   geometryChanged();
