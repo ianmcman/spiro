@@ -364,7 +364,8 @@ const GEN = {
 /* ------------------------------------------------------------------- curve */
 // Closed CCW polyline: centred on its area centroid, scaled so max radius = R,
 // with cumulative arc length and a unit tangent per segment.
-function makeCurve(name, R) {
+// round > 0: corners turning the way `bend` says (+1 convex, -1 reflex) are rounded to that radius.
+function makeCurve(name, R, round = 0, bend = 1) {
   const raw = GEN[name]();
   const pts = [];
   for (const p of raw) {
@@ -394,8 +395,53 @@ function makeCurve(name, R) {
   for (const p of pts) maxR = Math.max(maxR, Math.hypot(p[0] - cx, p[1] - cy));
   const k = R / maxR;
 
-  const xs = new Float64Array(n), ys = new Float64Array(n);
+  let xs = new Float64Array(n), ys = new Float64Array(n);
   for (let i = 0; i < n; i++) { xs[i] = (pts[i][0] - cx) * k; ys[i] = (pts[i][1] - cy) * k; }
+  let fast = null;
+  if (round > 0) ({ xs, ys, fast } = fillet(xs, ys, round, bend));
+  return curveFrom(xs, ys, fast);
+}
+
+// A round wheel can't reach into a sharp corner: it touches both sides at once and the contact jumps across.
+// Rolling it round a fillet of its own radius does exactly that (the wheel holds still while the contact
+// moves round the arc), so the pivot-about-a-vertex rule in nextSample doesn't swing it through the ring.
+function fillet(xs, ys, rho, bend) {
+  const n = xs.length, cum = new Float64Array(n + 1), corners = [];
+  for (let i = 0; i < n; i++) cum[i + 1] = cum[i] + Math.hypot(xs[(i + 1) % n] - xs[i], ys[(i + 1) % n] - ys[i]);
+  for (let i = 0; i < n; i++) {
+    const h = (i + n - 1) % n, j = (i + 1) % n;
+    const ax = xs[i] - xs[h], ay = ys[i] - ys[h], bx = xs[j] - xs[i], by = ys[j] - ys[i];
+    const turn = Math.atan2(ax * by - ay * bx, ax * bx + ay * by);
+    if (turn * bend > 0.2 && Math.abs(turn) < 2.5) corners.push({ i, turn, ax, ay, bx, by });
+  }
+  if (!corners.length) return { xs, ys, fast: null };
+  const P = cum[n], gap = (a, b) => ((cum[b.i] - cum[a.i]) % P + P) % P || P;   // polyline length a -> b
+  corners.forEach((c, q) => {
+    const prev = corners[(q + corners.length - 1) % corners.length], next = corners[(q + 1) % corners.length];
+    const tn = Math.tan(Math.abs(c.turn) / 2);
+    c.t = Math.min(rho * tn, 0.5 * gap(prev, c), 0.5 * gap(c, next));   // ponytail: tight corners get a smaller radius
+    c.r = c.t / tn;
+  });
+  const ox = [], oy = [], fast = [];
+  corners.forEach((c, q) => {
+    const la = Math.hypot(c.ax, c.ay), sg = Math.sign(c.turn);
+    const Ax = xs[c.i] - c.ax / la * c.t, Ay = ys[c.i] - c.ay / la * c.t;
+    const Cx = Ax - sg * c.ay / la * c.r, Cy = Ay + sg * c.ax / la * c.r;           // centre: left of travel if convex
+    const a0 = Math.atan2(Ay - Cy, Ax - Cx), M = Math.max(2, Math.ceil(Math.abs(c.turn) / 0.005));
+    for (let j = 0; j <= M; j++) { const a = a0 + c.turn * j / M; ox.push(Cx + c.r * Math.cos(a)); oy.push(Cy + c.r * Math.sin(a)); fast.push(j < M); }
+    const next = corners[(q + 1) % corners.length], end = gap(c, next);
+    for (let k = (c.i + 1) % n, d = cum[c.i + 1] - cum[c.i]; k !== next.i; d += cum[k + 1] - cum[k], k = (k + 1) % n) {
+      if (d > c.t + 1e-9 && d < end - next.t - 1e-9) { ox.push(xs[k]); oy.push(ys[k]); fast.push(false); }
+    }
+  });
+  return { xs: Float64Array.from(ox), ys: Float64Array.from(oy), fast };
+}
+
+// fast[i]: segment i is a fillet arc, where the wheel holds still; the walk hurries across it (see nextSample).
+const FAST = 0.03;
+function curveFrom(xs, ys, fast) {
+  const n = xs.length, wt = new Float64Array(n).fill(1);
+  if (fast) fast.forEach((f, i) => { if (f) wt[i] = FAST; });
 
   const cum = new Float64Array(n + 1), tx = new Float64Array(n), ty = new Float64Array(n);
   for (let i = 0; i < n; i++) {
@@ -411,7 +457,7 @@ function makeCurve(name, R) {
     turn[v] = Math.atan2(a * d - b * c, a * c + b * d);
     T += Math.abs(turn[v]);
   }
-  return { n, xs, ys, cum, tx, ty, turn, T, P: cum[n] };
+  return { n, xs, ys, cum, tx, ty, turn, T, P: cum[n], wt, fast: !!fast };
 }
 
 // Point and unit tangent at arc length s (wrapped), by binary search over cum[].
@@ -494,19 +540,22 @@ const base = document.createElement('canvas'), bctx = base.getContext('2d');    
 function geometry(p, half) {
   const inside = p.side === 'inside';
   const ringR = Math.max(1, p.ring / 100 * half);
-  const ring = makeCurve(p.ringShape, ringR);
+  const outline = makeCurve(p.ringShape, ringR);
   // Teeth: the wheel's perimeter is ring perimeter * wheel teeth / ring teeth, as with meshing gears.
   const unitP = makeCurve(p.wheelShape, 1).P;
-  const want = p.sizing === 'teeth' ? ring.P * p.wheelTeeth / p.ringTeeth / unitP : ringR * p.wheel / 100;
+  const size = (ringP) => Math.min(p.sizing === 'teeth' ? ringP * p.wheelTeeth / p.ringTeeth / unitP : ringR * p.wheel / 100, ringR * (inside ? INSIDE_CAP : 1));
+  // The wheel rolls round corners it can't reach into (see fillet); the sharp outline is what's drawn.
+  // ponytail: rounds to the wheel's max radius, exact for round wheels
+  let asked = size(outline.P), ring = makeCurve(p.ringShape, ringR, asked, inside ? 1 : -1);
+  if (p.sizing === 'teeth') { asked = size(ring.P); ring = makeCurve(p.ringShape, ringR, asked, inside ? 1 : -1); }   // teeth mesh along the rolled path
   // No drift: rescale the wheel so k ring laps are exactly m wheel perimeters (perimeter scales linearly).
-  const asked = Math.min(want, ringR * (inside ? INSIDE_CAP : 1));
   const clo = closure(ring.P, makeCurve(p.wheelShape, asked).P);
   const snap = (clo.k * ring.P / clo.m) / unitP / asked;
   const wheelR = asked * snap, wheel = makeCurve(p.wheelShape, wheelR);
   clo.snap = snap - 1;
   clo.ratio = ring.P / wheel.P;
   const a = p.angle * Math.PI / 180, d = p.pen / 100 * wheelR;
-  return { inside, ring, wheel, ringR, wheelR, penX: d * Math.cos(a), penY: d * Math.sin(a), clo };
+  return { inside, ring, outline, wheel, ringR, wheelR, penX: d * Math.cos(a), penY: d * Math.sin(a), clo };
 }
 
 // p is the live settings object for the current pattern, or a frozen copy for a kept layer.
@@ -522,6 +571,11 @@ function buildModel(p, w = vw, h = vh, maxN = MAX_SAMPLES) {
   m.tau = m.span + m.lambda * (k * m.ring.T + m.clo.m * m.wheel.T);
   m.N = Math.min(maxN, Math.max(Math.min(3000, maxN), Math.round(k * 1500 * m.tau / m.span)));
   m.walk = { s: 0, tau: 0, ri: 1, wi: m.inside ? 1 : 0, pend: 0, turn: 0, w: 0 };
+  if (m.ring.fast) {                                   // fillets make the walk's length uneven: measure it
+    nextSample(m, Infinity);
+    m.tau = m.walk.tau;
+    m.walk = { s: 0, tau: 0, ri: 1, wi: m.inside ? 1 : 0, pend: 0, turn: 0, w: 0 };
+  }
   m.ss = new Float64Array(m.N + 1);
   m.dp = new Float32Array(m.N + 1);
   m.cx = w / 2; m.cy = h / 2;
@@ -581,13 +635,15 @@ function nextSample(m, tau) {
     const re = st.ri <= m.clo.k * m.ring.n ? ringEvent(m, st.ri) : NONE;
     const we = st.wi < m.clo.m * m.wheel.n + (m.inside ? 1 : 0) ? wheelEvent(m, st.wi) : NONE;
     const e = re.s <= we.s ? re : we;
-    if (e === NONE || tau < st.tau + (e.s - st.s)) {
-      S.s = st.s + (tau - st.tau) + EPS;
+    const rw = m.ring.wt, seg = (st.ri - 1) % m.ring.n, wt = rw[seg];   // the ring segment s is on
+    if (e === NONE || tau < st.tau + (e.s - st.s) * wt) {
+      S.s = st.s + (tau - st.tau) / wt + EPS;
       S.d = ahead(m, st);
       return;
     }
-    st.tau += e.s - st.s; st.s = e.s;
-    st.pend = e === re ? 1 : 2; st.turn = e.turn; st.w = m.lambda * Math.abs(e.turn);
+    st.tau += (e.s - st.s) * wt; st.s = e.s;
+    st.pend = e === re ? 1 : 2; st.turn = e.turn;
+    st.w = m.lambda * Math.abs(e.turn) * (e === re ? Math.min(wt, rw[(seg + 1) % m.ring.n]) : wt);
     if (e === re) st.ri++; else st.wi++;
   }
 }
@@ -927,8 +983,8 @@ function drawWheels(ctx, i = drawn, zz = zoom.z, m = model) {
   // ring
   ctx.strokeStyle = 'rgba(165,167,152,0.35)';              // ring: muted text colour
   ctx.beginPath();
-  for (let i = 0; i < m.ring.n; i++) {
-    const x = m.cx + m.ring.xs[i], y = m.cy + m.ring.ys[i];
+  for (let i = 0; i < m.outline.n; i++) {
+    const x = m.cx + m.outline.xs[i], y = m.cy + m.outline.ys[i];
     if (i) ctx.lineTo(x, y); else ctx.moveTo(x, y);
   }
   ctx.closePath();
