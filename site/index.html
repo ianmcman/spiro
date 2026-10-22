@@ -206,7 +206,7 @@ body:not(.open) .fab { display: block; }
       <button type="button" id="q-slower" aria-label="Slower">&minus;</button>
       <output id="q-speed" aria-label="Speed"></output>
       <button type="button" id="q-faster" aria-label="Faster">+</button>
-      <button type="button" id="q-fit" class="hidden">Fit</button>
+      <button type="button" id="q-fit">Fit</button>
     </div>
     <p class="hint" id="hint">Press <b>Play</b> to draw, or drag around the canvas to roll the wheel by hand.</p>
   </main>
@@ -1169,7 +1169,7 @@ function tick() {
     needCircles = false;
     if (model && model.fourier) { model = buildModel(P); needRepaint = true; updateReadout(); }
   }
-  if (needView) { needView = false; viewPending = true; viewAt = performance.now(); $('q-fit').classList.toggle('hidden', zoom.z === 1 && !zoom.x && !zoom.y); }
+  if (needView) { needView = false; viewPending = true; viewAt = performance.now(); }
   if (viewPending && performance.now() - viewAt > 150) commitView();
   if (needRepaint) { needRepaint = false; repaintTrace(); }
   if (model && !paused && drawn < N) advance();
@@ -1612,7 +1612,7 @@ function init() {
   const pts = new Map();
   let pan = null, pinch = null;
   const setZoom = (z, ax, ay, wx, wy) => {          // world point (wx, wy) ends up under screen point (ax, ay)
-    zoom.z = Math.min(40, Math.max(0.5, z));
+    zoom.z = Math.min(40, Math.max(0.1, z));
     zoom.x = ax - wx * zoom.z; zoom.y = ay - wy * zoom.z;
     needView = true; schedule();
   };
@@ -1675,7 +1675,16 @@ function init() {
   };
   view.addEventListener('pointerup', endDrag);
   view.addEventListener('pointercancel', endDrag);
-  const fit = () => { zoom.z = 1; zoom.x = zoom.y = 0; needView = true; schedule(); };
+  // Fit: frame the whole design (every layer, every sample), edges included.
+  const fit = () => {
+    const b = bounds();
+    if (!b) { zoom.z = 1; zoom.x = zoom.y = 0; }
+    else {
+      const w = b.x1 - b.x0, h = b.y1 - b.y0, z = Math.min(40, Math.max(0.1, 0.94 * Math.min(vw / Math.max(w, 1), vh / Math.max(h, 1))));
+      zoom.z = z; zoom.x = vw / 2 - (b.x0 + b.x1) / 2 * z; zoom.y = vh / 2 - (b.y0 + b.y1) / 2 * z;
+    }
+    needView = true; schedule();
+  };
   $('q-fit').addEventListener('click', fit);
   if (!window.MediaRecorder || !view.captureStream) { $('record').disabled = true; $('record').title = 'This browser cannot record the canvas'; }
   $('record').addEventListener('click', toggleRecord);
@@ -1768,13 +1777,23 @@ function toggleRecord() {
 // Square output for video and GIF: the pattern and kept layers are rebuilt on a side x side canvas, so they're
 // framed the same whatever the screen shape (a long name fits instead of being cropped). Lines and circles are
 // scaled to look as they do on screen. draw(i) shows the pen at sample i; going backwards restrokes from 0.
+// A geometric pattern that pokes past the square is rebuilt with a smaller ring so all of it shows.
+function buildInSquare(p, side) {
+  let m = buildModel(Object.assign({}, p), side, side);
+  if (m.fourier) return m;
+  fill(m, m.N);
+  let ext = 0;
+  for (let i = 0; i <= m.N; i++) ext = Math.max(ext, Math.abs(m.xs[i] - m.cx), Math.abs(m.ys[i] - m.cy));
+  const half = side / 2 - 6;
+  return ext > half ? buildModel(Object.assign({}, p, { ring: p.ring * half / ext }), side, side) : m;
+}
 function squareRenderer(side) {
-  const m = buildModel(Object.assign({}, P), side, side), n = m.N, wheels = P.showWheels, z = Math.min(vw, vh) / side;
+  const m = buildInSquare(P, side), n = m.N, wheels = P.showWheels, z = Math.min(vw, vh) / side;
   const mk = () => { const c = document.createElement('canvas'); c.width = c.height = side; return c; };
   const out = mk(), octx = out.getContext('2d', { willReadFrequently: true });
   const tr = mk(), trc = tr.getContext('2d'), bs = mk(), bsc = bs.getContext('2d');
   for (const c of [trc, bsc]) { prepCtx(c, 1); c.z = z; }
-  for (const l of layers) { const k = buildModel(l.p, side, side); strokeRange(bsc, k, 0, k.N); }
+  for (const l of layers) { const k = buildInSquare(l.p, side); strokeRange(bsc, k, 0, k.N); }
   let at = 0;
   return {
     canvas: out, n,
@@ -1894,15 +1913,41 @@ function gifLZW(idx, out) {
   out.push(0);
 }
 
+// Bounding box of every layer and the whole current pattern, or null when there's nothing.
+function bounds() {
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const m of model ? layers.concat([model]) : layers) {
+    fill(m, m.N);
+    for (let i = 0; i <= m.N; i++) {
+      const x = m.xs[i], y = m.ys[i];
+      if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+    }
+  }
+  return x0 <= x1 ? { x0, y0, x1, y1 } : null;
+}
+// The screen rectangle, grown on any side the design pokes past (with a margin), so exports never clip it.
+function exportRegion() {
+  const b = bounds(), pad = 12;
+  let x0 = 0, y0 = 0, x1 = vw, y1 = vh;
+  if (b) {
+    if (b.x0 < pad) x0 = b.x0 - pad;
+    if (b.y0 < pad) y0 = b.y0 - pad;
+    if (b.x1 > vw - pad) x1 = b.x1 + pad;
+    if (b.y1 > vh - pad) y1 = b.y1 + pad;
+  }
+  return { x0, y0, w: x1 - x0, h: y1 - y0 };
+}
+
 // Renders every layer plus the whole current pattern at up to 4096 px on the long side.
 function savePNG() {
   if (!model) return;
-  const scale = Math.max(dpr, Math.min(4, 4096 / Math.max(vw, vh)));
+  const R = exportRegion(), scale = Math.max(dpr, Math.min(4, 4096 / Math.max(R.w, R.h)));
   const out = document.createElement('canvas');
-  out.width = Math.round(vw * scale); out.height = Math.round(vh * scale);
+  out.width = Math.round(R.w * scale); out.height = Math.round(R.h * scale);
   const octx = out.getContext('2d');
   if ($('bg').value) { octx.fillStyle = $('bg').value; octx.fillRect(0, 0, out.width, out.height); }
   prepCtx(octx, scale);
+  octx.translate(-R.x0, -R.y0);
   for (const l of layers) strokeRange(octx, l, 0, l.N);
   strokeRange(octx, model, 0, N);
   out.toBlob((blob) => download(blob, 'png'), 'image/png');
@@ -1955,8 +2000,9 @@ function saveSVG() {
       out.push('<path d="' + d + '" stroke="rgb(' + c.join(',') + ')" stroke-width="' + m.p.weight + '"/>');
     }
   }
-  const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="' + vw + '" height="' + vh + '" viewBox="0 0 ' + vw + ' ' + vh + '">' +
-    ($('bg').value ? '<rect width="100%" height="100%" fill="' + $('bg').value + '"/>' : '') + '<g fill="none" stroke-opacity="' + INK_ALPHA + '" stroke-linejoin="round">' +
+  const R = exportRegion();
+  const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="' + R.w + '" height="' + R.h + '" viewBox="' + R.x0 + ' ' + R.y0 + ' ' + R.w + ' ' + R.h + '">' +
+    ($('bg').value ? '<rect x="' + R.x0 + '" y="' + R.y0 + '" width="' + R.w + '" height="' + R.h + '" fill="' + $('bg').value + '"/>' : '') + '<g fill="none" stroke-opacity="' + INK_ALPHA + '" stroke-linejoin="round">' +
     out.join('') + '</g></svg>';
   download(new Blob([svg], { type: 'image/svg+xml' }), 'svg');
 }
