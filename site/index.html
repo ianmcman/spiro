@@ -231,6 +231,7 @@ body:not(.open) .fab { display: block; }
             <button type="button" class="btn" id="shuffle">Shuffle</button>
             <button type="button" class="btn" id="keep">Keep layer</button>
             <button type="button" class="btn" id="undo">Undo layer</button>
+            <label class="field wide"><span>PNG / SVG background</span><select id="bg"><option value="#282923">Dark</option><option value="">Transparent</option><option value="#ffffff">White</option></select></label>
             <button type="button" class="btn" id="save">Save PNG</button>
             <button type="button" class="btn" id="svg">Save SVG</button>
             <button type="button" class="btn" id="record">Record video</button>
@@ -300,7 +301,8 @@ body:not(.open) .fab { display: block; }
             <label class="row"><span class="lab">Size (1/n of wheel)</span><input type="range" id="w2div" min="2" max="12" step="1"><input class="num" id="o-w2div" type="text" inputmode="decimal" autocomplete="off" spellcheck="false" aria-label="Second wheel size value"></label>
             <label class="row"><span class="lab">Orbit speed</span><input type="range" id="w2speed" min="1" max="12" step="1"><input class="num" id="o-w2speed" type="text" inputmode="decimal" autocomplete="off" spellcheck="false" aria-label="Orbit speed value"></label>
           </div>
-          <p class="note">The pen moves onto the second wheel; Pen radius sets its reach. Needs a round wheel.</p>
+          <button type="button" class="btn" id="w2fit">Fit to screen</button>
+          <p class="note">The pen moves onto the second wheel; Pen radius sets its reach. Needs a round wheel. Fit shrinks the ring so the pen stays on screen.</p>
         </div>
       </section>
 
@@ -585,6 +587,14 @@ const $ = (id) => document.getElementById(id);
 const view = $('view'), vctx = view.getContext('2d');
 const trace = document.createElement('canvas'), tctx = trace.getContext('2d');   // live pattern
 const base = document.createElement('canvas'), bctx = base.getContext('2d');     // kept layers
+
+// Scales the ring down so the second wheel's pen stays within 95% of the half-size.
+function fitReach(q) {
+  const half = Math.max(20, Math.min(vw, vh) / 2 - 6), g = geometry(q, half);
+  if (!g.w2) return;
+  const reach = (g.inside ? g.ringR - g.wheelR : g.ringR + g.wheelR) + g.w2.c + g.w2.d;   // farthest the pen can get from the centre
+  if (reach > 0.95 * half) q.ring = Math.max(20, Math.floor(q.ring * 0.95 * half / reach));
+}
 
 // Geometry only (no samples): used by buildModel and by Shuffle to test closure cheaply.
 function geometry(p, half) {
@@ -1671,6 +1681,7 @@ function init() {
   $('record').addEventListener('click', toggleRecord);
   $('gif').addEventListener('click', saveGIF);
   $('save').addEventListener('click', savePNG);
+  $('w2fit').addEventListener('click', () => { fitReach(P); syncUI(); geometryChanged(); });
 
   // panel: hidden on phones, open on desktop
   const phone = window.matchMedia(PHONE_Q);
@@ -1720,9 +1731,7 @@ function shuffle() {
   if (q.second) {
     q.wheelShape = 'circle'; q.w2side = pick(['inside', 'outside']); q.w2div = 2 + (Math.random() * 7 | 0); q.w2speed = 1 + (Math.random() * 5 | 0);
     q.pen = Math.min(q.pen, 110);
-    const half = Math.max(20, Math.min(vw, vh) / 2 - 6), g = geometry(q, half);
-    const reach = (g.inside ? g.ringR - g.wheelR : g.ringR + g.wheelR) + g.w2.c + g.w2.d;   // farthest the pen can get from the centre
-    if (reach > 0.95 * half) q.ring = Math.max(20, Math.floor(q.ring * 0.95 * half / reach));
+    fitReach(q);
   }
   Object.assign(P, q, { hue: Math.round(rnd(0, 360)), weight: Math.round(rnd(0.8, 2.2) * 10) / 10 });
   syncUI();
@@ -1892,8 +1901,7 @@ function savePNG() {
   const out = document.createElement('canvas');
   out.width = Math.round(vw * scale); out.height = Math.round(vh * scale);
   const octx = out.getContext('2d');
-  octx.fillStyle = '#282923';
-  octx.fillRect(0, 0, out.width, out.height);
+  if ($('bg').value) { octx.fillStyle = $('bg').value; octx.fillRect(0, 0, out.width, out.height); }
   prepCtx(octx, scale);
   for (const l of layers) strokeRange(octx, l, 0, l.N);
   strokeRange(octx, model, 0, N);
@@ -1948,7 +1956,7 @@ function saveSVG() {
     }
   }
   const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="' + vw + '" height="' + vh + '" viewBox="0 0 ' + vw + ' ' + vh + '">' +
-    '<rect width="100%" height="100%" fill="#282923"/><g fill="none" stroke-opacity="' + INK_ALPHA + '" stroke-linejoin="round">' +
+    ($('bg').value ? '<rect width="100%" height="100%" fill="' + $('bg').value + '"/>' : '') + '<g fill="none" stroke-opacity="' + INK_ALPHA + '" stroke-linejoin="round">' +
     out.join('') + '</g></svg>';
   download(new Blob([svg], { type: 'image/svg+xml' }), 'svg');
 }
