@@ -233,11 +233,13 @@ body:not(.open) .fab { display: block; }
             <button type="button" class="btn" id="svg">Save SVG</button>
             <button type="button" class="btn" id="record">Record video</button>
             <button type="button" class="btn" id="gif">Save GIF</button>
+            <button type="button" class="btn" id="finish">Finish now</button>
+            <button type="button" class="btn" id="link">Copy link</button>
             <button type="button" class="btn wide" id="clear">Clear all</button>
           </div>
           <p class="note">Drag around the canvas to roll the wheel by hand. Scroll or pinch to zoom; Shift-drag or two fingers to pan.</p>
           <p class="note">Record video restarts the drawing and saves it as a video when it finishes. Save GIF makes a looping 6 second GIF of the whole drawing. Both are square.</p>
-          <p class="note keys">Space play/pause · W wheels · &minus;/+ speed · D draw · S shuffle · K keep layer · U undo layer · C clear · 0 fit</p>
+          <p class="note keys">Space play/pause · W wheels · &minus;/+ speed · D draw · S shuffle · K keep layer · U undo layer · C clear · F finish · 0 fit</p>
         </div>
       </section>
 
@@ -1342,17 +1344,37 @@ function loadState() {
       .map((f) => ({ p: applyParams(Object.assign({}, DEFAULTS), (k) => { const v = f[LAYER_KEYS.indexOf(k)]; return k === 'text' && v ? decText(v) : v; }, LAYER_KEYS) }));
   }
 }
+function stateHash() {
+  const q = new URLSearchParams();
+  for (const k of KEYS) q.set(k, typeof P[k] === 'boolean' ? (P[k] ? '1' : '0') : String(P[k]));
+  if (layers.length) q.set('layers', layers.map((l) => LAYER_KEYS.map((k) => (k === 'text' ? encText(l.p.text) : l.p[k])).join(',')).join('~'));
+  return '#' + q.toString();
+}
 let saveTimer = 0;
 function saveState() {
   if (saveTimer) return;
   saveTimer = setTimeout(() => {
     saveTimer = 0;
-    const q = new URLSearchParams();
-    for (const k of KEYS) q.set(k, typeof P[k] === 'boolean' ? (P[k] ? '1' : '0') : String(P[k]));
-    if (layers.length) q.set('layers', layers.map((l) => LAYER_KEYS.map((k) => (k === 'text' ? encText(l.p.text) : l.p[k])).join(',')).join('~'));
-    const h = '#' + q.toString();
+    const h = stateHash();
     if (location.hash !== h) history.replaceState(null, '', h);
   }, 400);
+}
+// Link to exactly this pattern: the share sheet on phones, the clipboard elsewhere. Built now, not from the debounced hash.
+async function shareLink() {
+  const url = location.origin + location.pathname + stateHash(), btn = $('link');
+  history.replaceState(null, '', stateHash());
+  if (window.matchMedia('(pointer: coarse)').matches && navigator.share) {
+    try { await navigator.share({ url, title: 'Spirograph' }); return; } catch (e) { if (e.name === 'AbortError') return; }
+  }
+  try { await navigator.clipboard.writeText(url); btn.textContent = 'Copied'; } catch (_) { btn.textContent = 'Copy failed'; }
+  setTimeout(() => { btn.textContent = 'Copy link'; }, 1500);
+}
+// Draw the rest of the pattern at once.
+function finish() {
+  if (!model || drawn >= N) return;
+  strokeRange(tctx, model, drawn, N);
+  drawn = N;
+  schedule();
 }
 
 const PHONE_Q = '(max-width: 639px), (orientation: landscape) and (max-height: 499px) and (min-width: 640px)';
@@ -1501,6 +1523,8 @@ function init() {
   document.fonts.load("96px 'JetBrains Mono'").then(() => { nameCache.clear(); if (P.text.trim() || layers.some((l) => l.p.text)) { rebuildLayers(); needRebuild = true; schedule(); } }, () => {});
   $('clear').addEventListener('click', () => { layers = []; paintBase(); clearTrace(); drawn = 0; paused = true; updateReadout(); schedule(); });
   $('keep').addEventListener('click', keepLayer);
+  $('finish').addEventListener('click', finish);
+  $('link').addEventListener('click', shareLink);
   $('undo').addEventListener('click', undoLayer);
   $('svg').addEventListener('click', saveSVG);
 
@@ -1600,7 +1624,7 @@ function init() {
     if (!e.key) return;
     const act = {
       ' ': togglePlay, w: () => $('q-wheels').click(), '-': () => stepSpeed(-1), '+': () => stepSpeed(1), '=': () => stepSpeed(1),
-      d: () => $('draw').click(), s: shuffle, c: () => $('clear').click(), k: keepLayer, u: undoLayer, 0: () => $('q-fit').click()
+      d: () => $('draw').click(), s: shuffle, c: () => $('clear').click(), k: keepLayer, u: undoLayer, f: finish, 0: () => $('q-fit').click()
     }[e.key.toLowerCase()];
     if (!act) return;
     e.preventDefault();
