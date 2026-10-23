@@ -342,6 +342,7 @@ body:not(.open) .fab { display: block; }
             <label class="field sv-page hidden"><span>Margin (mm)</span><input type="text" class="text" id="sv-margin" inputmode="decimal" value="10"></label>
             <label class="check sv-pdf hidden"><input type="checkbox" id="sv-cmyk"><span>CMYK colours</span></label>
             <label class="check sv-plot hidden"><input type="checkbox" id="sv-pens"><span>Keep layer colours</span></label>
+            <label class="field sv-plot hidden"><span>Pen width (mm)</span><input type="text" class="text" id="sv-pen" inputmode="decimal" value="0.3"></label>
             <button type="button" class="btn primary wide" id="sv-queue">Queue render</button>
           </div>
           <div class="sv-list" id="sv-jobs"></div>
@@ -372,6 +373,7 @@ body:not(.open) .fab { display: block; }
             <button type="button" class="btn" id="sv-cut">Cut out subject</button>
             <button type="button" class="btn" id="sv-sil">Subject outline</button>
             <button type="button" class="btn" id="sv-face">Face drawing</button>
+            <label class="check"><input type="checkbox" id="sv-clean"><span>clean up traced lines (drops small spurs and hairs)</span></label>
             <label class="check"><input type="checkbox" id="sv-faceout" checked><span>with head outline</span></label>
             <label class="check"><input type="checkbox" id="sv-facephoto" checked><span>use the photo's edges (a sketch; off gives a plain line drawing)</span></label>
           </div>
@@ -1017,6 +1019,23 @@ function maskTerms(b, W, H, o) {
       if (del.length) changed = true;
     }
   }
+  if (o.prune) {
+    // Spur removal: peel the free ends of the centrelines a few pixels, then grow the ends that remain back to their length. The little
+    // branches the thinning leaves on a noisy trace vanish (they hang off a junction, not a free end); true stroke ends come back.
+    const cnt = (i) => b[i - 1] + b[i + 1] + b[i - W] + b[i + W] + b[i - W - 1] + b[i - W + 1] + b[i + W - 1] + b[i + W + 1], layers = [];
+    for (let s = 0; s < o.prune; s++) {
+      const del = [];
+      for (let y = 2; y < H - 2; y++) for (let x = 2; x < W - 2; x++) { const i = y * W + x; if (b[i] && cnt(i) === 1) del.push(i); }
+      for (const i of del) b[i] = 0;
+      layers.push(del);
+    }
+    for (let s = layers.length - 1; s >= 0; s--) {
+      for (const i of layers[s]) {
+        if (b[i]) continue;
+        for (const d of [1, -1, W, -W, W + 1, W - 1, -W + 1, -W - 1]) { const j = i + d; if (b[j] && cnt(j) <= 1) { b[i] = 1; break; } }
+      }
+    }
+  }
   for (const bl of blobs) if (!bl.list.some((q) => b[q])) b[bl.c] = 1;      // put back anything thinned to nothing
   // Depth-first walk of each centreline, left to right: out along every stroke and back, so the pen stays down
   // within a piece (drawing over itself) and only lifts between pieces such as separate letters or the dot on an i.
@@ -1126,7 +1145,7 @@ function buildName(p, w, h, maxN) {
 // Picture: edges of the uploaded image (Sobel on a blurred grey copy, kept above a threshold relative to the
 // strong edges), then the same thinning, walk and FFT as a name. Cached per threshold and detail.
 function picTerms(pic) {
-  const key = pic.thr + ',' + pic.detail;
+  const key = pic.thr + ',' + pic.detail + (pic.clean ? ',c' : '');
   if (pic.key === key) return pic.T;
   if (REMOTE) return null;
   const k = pic.detail / Math.max(pic.src.width, pic.src.height), M = 6;       // M: white margin; edges within 2 px of the picture's own border are ignored, so its frame isn't traced
@@ -1156,7 +1175,7 @@ function picTerms(pic) {
   for (let v = 0; v < 256; v++) { acc += hist[v]; if (acc >= 0.99 * W * H) { p99 = Math.max(8, v) / 255 * max; break; } }   // robust to a few harsh pixels
   const b = new Uint8Array(W * H), t = pic.thr / 100 * p99;
   for (let y = M + 2; y < H - M - 2; y++) for (let x = M + 2; x < W - M - 2; x++) b[y * W + x] = pic.lines ? (g[y * W + x] < 170 ? 1 : 0) : mag[y * W + x] > t ? 1 : 0;   // a line drawing: its dark lines are the path
-  pic.T = maskTerms(b, W, H, { n: 1, pitch: H, size: 0, len: pic.detail > 1536 ? 200 : 80, dots: false, minBlob: Math.max(6, Math.round(pic.detail / 40)) });
+  pic.T = maskTerms(b, W, H, { n: 1, pitch: H, size: 0, len: pic.detail > 1536 ? 200 : 80, dots: false, prune: pic.clean ? 7 : 0, minBlob: Math.max(6, Math.round(pic.detail / 40)) });
   if (pic.T) {
     // the picture's colour at each path point (5 x 5 average), lifted to a minimum brightness so it shows on the dark canvas
     const col = pic.T.col = new Uint8Array(pic.T.M * 3);
@@ -1461,13 +1480,13 @@ function fetchName(lines, k) {
 async function fetchPic(pic, k) {
   if (pic.job === k) return;
   pic.job = k;
-  const thr = pic.thr, detail = pic.detail, q = '?thr=' + thr + '&detail=' + detail;
+  const thr = pic.thr, detail = pic.detail, q = '?thr=' + thr + '&detail=' + detail + (pic.clean ? '&clean=1' : '');
   try {
     let r = pic.id ? await fetch('api/terms/pic' + q + '&id=' + pic.id, { method: 'POST' }) : null;
     if (!r || r.status === 410) r = await fetch('api/terms/pic' + q, { method: 'POST', body: pic.file });
     if (!r.ok && r.status !== 204) throw new Error('HTTP ' + r.status);
     pic.id = r.headers.get('X-Pic-Id') || pic.id;
-    if (thr + ',' + detail !== pic.thr + ',' + pic.detail) return;                  // sliders moved on: a newer request is coming
+    if (thr + ',' + detail + (q.includes('clean') ? 1 : 0) !== pic.thr + ',' + pic.detail + (pic.clean ? 1 : 0)) return;                  // sliders moved on: a newer request is coming
     pic.T = r.status === 204 ? null : unpackTerms(await r.arrayBuffer());
     pic.key = k;
   } catch (e) { pic.T = null; pic.key = k; serverFail(e); }
@@ -1478,7 +1497,8 @@ function remoteReady() {
   let ready = true;
   for (const p of [P, ...layers.map((l) => l.p)]) {
     if (p.pic) {
-      const k = p.pic.thr + ',' + p.pic.detail;
+      p.pic.clean = !!$('sv-clean').checked;
+      const k = p.pic.thr + ',' + p.pic.detail + (p.pic.clean ? ',c' : '');
       if (p.pic.key !== k) { ready = false; fetchPic(p.pic, k); }
     } else if (p.text && p.text.trim()) {
       const lines = nameLines(p.text.trim(), vw, vh), k = lines.join('\n');
@@ -1490,7 +1510,7 @@ function remoteReady() {
 // Settings as plain data for the server (a picture travels as its id).
 const plainP = (p) => {
   const o = Object.assign({}, p);
-  if (p.pic) o.pic = { id: p.pic.id, thr: p.pic.thr, detail: p.pic.detail, match: p.pic.match, name: p.pic.name };
+  if (p.pic) o.pic = { id: p.pic.id, thr: p.pic.thr, detail: p.pic.detail, match: p.pic.match, clean: !!p.pic.clean, name: p.pic.name };
   return o;
 };
 // Ask the server to render the current design; a server that has forgotten a picture (restart) gets it again.
@@ -1553,12 +1573,26 @@ async function svLoadDesign(id) {
   syncUI(); geometryChanged(true); layersStale = true; needRebuild = true;
   paused = false;
 }
+// The export options as chosen in the Background render card.
+function svExportOpts() {
+  const [fmt, size, fps] = $('sv-fmt').value.split(':');
+  return { fmt, size: +size, fps: +fps, seconds: parseFloat($('sv-secs').value) || 20, page: $('sv-page').value, margin: parseFloat($('sv-margin').value),
+    cmyk: $('sv-cmyk').checked, colors: $('sv-pens').checked, pen: parseFloat($('sv-pen').value) || 0.3 };
+}
 async function svRefreshJobs() {
   const list = await (await svApi('jobs')).json();
-  $('sv-jobs').innerHTML = list.map((j) => '<div class="sv-item" data-id="' + j.id + '"><span class="sv-name">' + svEsc(j.label) + '<br><small>' + j.fmt.toUpperCase() + ' · ' +
-    (j.state === 'done' ? (j.bytes / 1e6).toFixed(1) + ' MB' : j.state === 'error' ? 'failed: ' + svEsc(j.error || '') : j.state) + '</small></span>' +
-    (j.state === 'done' ? '<a class="btn" href="api/jobs/' + j.id + '/file" download>Download</a>' : '') +
-    (j.state === 'done' || j.state === 'error' ? '<button type="button" class="btn" data-act="del">×</button>' : '') + '</div>').join('');
+  const mins = (ms) => (ms < 90e3 ? Math.round(ms / 1e3) + ' s' : Math.round(ms / 6e4) + ' min');
+  $('sv-jobs').innerHTML = list.map((j) => {
+    const live = j.state === 'queued' || j.state === 'running', pct = j.total ? Math.min(99, Math.round(100 * (j.done || 0) / j.total)) : 0;
+    let info = j.state === 'done' ? (j.bytes / 1e6).toFixed(1) + ' MB' : j.state === 'error' ? 'failed: ' + svEsc(j.error || '') : j.state;
+    if (j.state === 'running' && j.total && j.done > 0) info = pct + '% · about ' + mins((Date.now() - j.started) * (j.total - j.done) / j.done) + ' left';
+    if (j.finished && j.started && j.state === 'done') info += ' · took ' + mins(j.finished - j.started);
+    return '<div class="sv-item" data-id="' + j.id + '"><span class="sv-name">' + svEsc(j.label) + '<br><small>' + j.fmt.toUpperCase() + ' · ' + info + '</small></span>' +
+      (j.state === 'done' ? '<a class="btn" href="api/jobs/' + j.id + '/file" download>Download</a>' : '') +
+      (live ? '<button type="button" class="btn" data-act="cancel">Cancel</button>' : '') +
+      (!live && j.rerun ? '<button type="button" class="btn" data-act="rerun" title="Render again with the options chosen above">Re-run</button>' : '') +
+      (!live ? '<button type="button" class="btn" data-act="del">×</button>' : '') + '</div>';
+  }).join('');
   clearTimeout(svTimer);
   if (list.some((j) => j.state === 'queued' || j.state === 'running')) svTimer = setTimeout(() => svRefreshJobs().catch(() => {}), 3000);
 }
@@ -1592,9 +1626,7 @@ function initServerUI() {
   $('sv-queue').addEventListener('click', () => svBusy($('sv-queue'), async () => {
     if (!model) return;
     await svReady();
-    const [fmt, size, fps] = $('sv-fmt').value.split(':');
-    await svPost('jobs', Object.assign(svDesign(), { kind: 'export', fmt, size: +size, fps: +fps, seconds: parseFloat($('sv-secs').value) || 20, page: $('sv-page').value,
-      margin: parseFloat($('sv-margin').value), cmyk: $('sv-cmyk').checked, colors: $('sv-pens').checked, label: fileLabel().replace(/ - Spirograph$/, '') }));
+    await svPost('jobs', Object.assign(svDesign(), { kind: 'export', label: fileLabel().replace(/ - Spirograph$/, '') }, svExportOpts()));
     await svRefreshJobs();
   }));
   $('sv-bqueue').addEventListener('click', () => svBusy($('sv-bqueue'), async () => {
@@ -1606,9 +1638,14 @@ function initServerUI() {
     await svRefreshJobs();
   }));
   $('sv-jobs').addEventListener('click', (e) => {
-    const b = e.target.closest('button[data-act="del"]');
-    if (b) svBusy(b, async () => { await svApi('jobs/' + b.closest('.sv-item').dataset.id, { method: 'DELETE' }); await svRefreshJobs(); });
+    const b = e.target.closest('button[data-act]');
+    if (!b) return;
+    const id = b.closest('.sv-item').dataset.id;
+    if (b.dataset.act === 'del') svBusy(b, async () => { await svApi('jobs/' + id, { method: 'DELETE' }); await svRefreshJobs(); });
+    if (b.dataset.act === 'cancel') svBusy(b, async () => { await svPost('jobs/' + id + '/cancel', {}); await svRefreshJobs(); });
+    if (b.dataset.act === 'rerun') svBusy(b, async () => { await svPost('jobs/' + id + '/rerun', svExportOpts()); await svRefreshJobs(); });
   });
+  $('sv-clean').addEventListener('change', () => { if (P.pic) geometryChanged(true); });
   $('sv-fetch').addEventListener('click', () => svBusy($('sv-fetch'), async () => {
     const r = await (await svPost('fetch', { url: $('sv-url').value.trim() })).json();
     if (P.text) { lastText = P.text; P.text = ''; }

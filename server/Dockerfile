@@ -18,6 +18,7 @@ RUN mkdir -p server/models
 COPY --from=faces --chmod=644 /models/ ./server/models/
 # U2-Net (small) for "Cut out subject"; Apache-2.0
 ADD --chmod=644 --checksum=sha256:309c8469258dda742793dce0ebea8e6dd393174f89934733ecc8b14c76f4ddd8 https://github.com/danielgatis/rembg/releases/download/v0.0.0/u2netp.onnx /app/server/models/u2netp.onnx
+ADD --chmod=644 --checksum=sha256:8d10d2f3bb75ae3b6d527c77944fc5e7dcd94b29809d47a739a7a728a912b491 https://github.com/danielgatis/rembg/releases/download/v0.0.0/u2net.onnx /app/server/models/u2net.onnx
 
 ENV NODE_ENV=production PORT=8080 SITE_DIR=/app/site DATA_DIR=/data
 USER node

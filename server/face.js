@@ -100,6 +100,54 @@ function bins(pts, n, how) {
   return out;
 }
 
+
+// The picture's crop as pixel data at crop resolution (optionally through a canvas filter).
+function cropData(src, rx0, ry0, rw, rh, cw, ch, filter) {
+  const g = E.createCanvas(cw, ch), gx = g.getContext('2d', { willReadFrequently: true });
+  if (filter) gx.filter = filter;
+  gx.fillStyle = '#fff'; gx.fillRect(0, 0, cw, ch);
+  gx.drawImage(src, rx0, ry0, rw, rh, 0, 0, cw, ch);
+  return gx.getImageData(0, 0, cw, ch).data;
+}
+// A rounded rectangle as a closed polyline.
+function roundRect(cx, cy, hw, hh, r) {
+  const out = [], arc = (ax, ay, a0) => { for (let i = 0; i <= 6; i++) { const a = a0 + Math.PI / 2 * i / 6; out.push([ax + r * Math.cos(a), ay + r * Math.sin(a)]); } };
+  arc(cx + hw - r, cy + hh - r, 0); arc(cx - hw + r, cy + hh - r, Math.PI / 2); arc(cx - hw + r, cy - hh + r, Math.PI); arc(cx + hw - r, cy - hh + r, Math.PI * 1.5);
+  out.push(out[0]);
+  return out.flatMap((p, i) => { if (!i) return [p]; const q = out[i - 1], n = Math.max(1, Math.ceil(Math.hypot(p[0] - q[0], p[1] - q[1]) / 1.2)); return Array.from({ length: n }, (_, j) => [q[0] + (p[0] - q[0]) * (j + 1) / n, q[1] + (p[1] - q[1]) * (j + 1) / n]); });
+}
+// Share of a rounded rectangle's outline that lies on edge pixels (tolerating a pixel either side), and the longest unbroken miss.
+function ringCover(cx, cy, hw, hh, mag, gdx, gdy, cw, ch, T) {
+  const ring = roundRect(cx, cy, hw, hh, Math.min(hw, hh) * 0.45);
+  let hit = 0, gap = 0, run = 0;
+  for (let n = 0; n < ring.length; n++) {
+    const [x, y] = ring[n], a = ring[Math.max(0, n - 1)], b = ring[Math.min(ring.length - 1, n + 1)], tl = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1, nx = -(b[1] - a[1]) / tl, ny = (b[0] - a[0]) / tl;
+    let ok = false;
+    for (let v = -1; v <= 1 && !ok; v++) for (let u = -1; u <= 1; u++) {
+      const xx = Math.round(x) + u, yy = Math.round(y) + v;
+      if (xx < 0 || xx >= cw || yy < 0 || yy >= ch) continue;
+      const i = yy * cw + xx;
+      if (mag[i] > T && Math.abs(gdx[i] * nx + gdy[i] * ny) > 0.8 * mag[i]) { ok = true; break; }   // an edge across the outline, not along it
+    }
+    if (ok) { hit++; run = 0; } else { run++; gap = Math.max(gap, run); }
+  }
+  return { cover: hit / ring.length, gap: gap / ring.length };
+}
+// Fits a rounded rectangle around an eye on the edge map: the candidate whose outline lies on the most edge pixels, or null.
+// A frame stands out from its surroundings; rings a quarter larger and smaller than it must not be edges too (skin texture, busy scenes).
+function fitLens(eye, mag, gdx, gdy, cw, ch, T) {
+  const [ex, ey] = centre(eye), ew = Math.max(...eye.map((p) => p[0])) - Math.min(...eye.map((p) => p[0]));
+  if (ew < 14) return null;                                        // too small to resolve a frame
+  let best = null;
+  for (const hwk of [0.8, 1.0, 1.2, 1.4, 1.6, 1.8]) for (const asp of [0.5, 0.65, 0.8, 0.95]) for (const dx of [-0.3, -0.15, 0, 0.15, 0.3]) for (const dy of [-0.1, 0.05, 0.2, 0.35, 0.5]) {
+    const hw = ew * hwk, hh = hw * asp, cx = ex + ew * dx, cy = ey + ew * dy, { cover, gap } = ringCover(cx, cy, hw, hh, mag, gdx, gdy, cw, ch, T);
+    if (cover >= 0.7 && gap <= 0.15 && (!best || cover > best.cover)) best = { cx, cy, hw, hh, cover };
+  }
+  if (!best) return null;
+  const out = ringCover(best.cx, best.cy, best.hw * 1.25, best.hh * 1.25, mag, gdx, gdy, cw, ch, T).cover, inn = ringCover(best.cx, best.cy, best.hw * 0.75, best.hh * 0.75, mag, gdx, gdy, cw, ch, T).cover;
+  return (out + inn) / 2 < 0.45 ? best : null;
+}
+
 /* ---------------------------------------------------------------- the drawing, as one path */
 // Returns the faces as a path in a crop of the picture (long side 640): { ox, oy, faces }. The features are exact curves.
 // The subject's outline and the photo's edges (sketch) are walked as thin raster lines, then everything is joined; pen lifts
@@ -180,6 +228,27 @@ async function faceVectors(src, mask, sketch = false) {
       if (list.length >= 40) for (const i of list) b[i] = 1;          // short scraps are noise
     }
   }
+
+  // Glasses: both lenses fitted as rounded rectangles on the edge map, then the bridge and the temples. The photo's own edges inside the
+  // frame are dropped, since the fitted shapes replace them.
+  const frames = [];
+  {
+    const gd = cropData(src, rx0, ry0, rw, rh, cw, ch, 'grayscale(1) blur(1px)'), mag = new Float32Array(N), gdx = new Float32Array(N), gdy = new Float32Array(N), v = (j) => gd[4 * j];
+    for (let y = 1; y < ch - 1; y++) for (let x = 1; x < cw - 1; x++) {
+      const i = y * cw + x;
+      gdx[i] = v(i - cw + 1) + 2 * v(i + 1) + v(i + cw + 1) - v(i - cw - 1) - 2 * v(i - 1) - v(i + cw - 1);
+      gdy[i] = v(i + cw - 1) + 2 * v(i + cw) + v(i + cw + 1) - v(i - cw - 1) - 2 * v(i - cw) - v(i - cw + 1);
+      mag[i] = Math.hypot(gdx[i], gdy[i]);
+    }
+    all.forEach((L, fi) => {
+      const z = skin[fi], vals = [];
+      for (let y = Math.max(1, Math.floor(z.y0)); y < Math.min(ch - 1, z.y1); y += 2) for (let x = Math.max(1, Math.floor(z.x0)); x < Math.min(cw - 1, z.x1); x += 2) vals.push(mag[y * cw + x]);
+      vals.sort((p, q) => p - q);
+      const T = (vals[Math.floor(vals.length * 0.85)] || 0), lens = [[33, 42], [87, 96]].map(([a, c]) => fitLens(byAngle(P(L, range(a, c))), mag, gdx, gdy, cw, ch, T));
+      if (lens[0] && lens[1]) frames.push({ lens, z });
+    });
+  }
+  for (const { lens } of frames) for (const l of lens) for (let y = Math.max(0, Math.floor(l.cy - l.hh - 5)); y < Math.min(ch, l.cy + l.hh + 6); y++) for (let x = Math.max(0, Math.floor(l.cx - l.hw - 5)); x < Math.min(cw, l.cx + l.hw + 6); x++) b[y * cw + x] = 0;
   const fat = new Uint8Array(N);                                   // 3 px wide lines thin to a clean centreline; 1 px lines break up
   for (let y = 2; y < ch - 2; y++) for (let x = 2; x < cw - 2; x++) if (b[y * cw + x]) for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) fat[(y + dy) * cw + x + dx] = 1;
   const walk = E.maskTerms(fat, cw, ch, { n: 1, pitch: ch, size: 0, len: 80, dots: false, minBlob: 12, pathOnly: true });
@@ -203,6 +272,53 @@ async function faceVectors(src, mask, sketch = false) {
     const flat = rot(mouth, -an), top = rot(bins(flat, 6, 'min'), an), bot = rot(bins(flat, 6, 'max'), an), mid = rot(bins(flat, 6, 'mid'), an);   // level the mouth first
     add(sample(top.concat(bot.slice().reverse()), true));                                           // lips: top edge and bottom edge, joined at the corners
     add(sample(mid, false));                                                                         // the line where they part
+  }
+
+  for (const { lens, z } of frames) {
+    const [l, r] = lens[0].cx < lens[1].cx ? lens : [lens[1], lens[0]], tilt = Math.atan2(r.cy - l.cy, r.cx - l.cx);
+    for (const q of lens) add(roundRect(q.cx, q.cy, q.hw, q.hh, Math.min(q.hw, q.hh) * 0.45));
+    add(sample([[l.cx + l.hw, l.cy - l.hh * 0.45], [(l.cx + l.hw + r.cx - r.hw) / 2, (l.cy + r.cy) / 2 - l.hh * 0.6], [r.cx - r.hw, r.cy - r.hh * 0.45]], false));         // bridge
+    const temple = (q, sign, edge) => { const x = q.cx + sign * q.hw, y = q.cy - q.hh * 0.45, len = Math.max(0, Math.abs(edge - x)) / Math.max(0.3, Math.cos(tilt)) * 0.9; add(sample([[x, y], [x + sign * len * 0.5 * Math.cos(tilt), y + sign * len * 0.5 * Math.sin(tilt)], [x + sign * len * Math.cos(tilt), y + sign * len * Math.sin(tilt)]], false)); };
+    temple(l, -1, z.x0); temple(r, 1, z.x1);                                                       // arms toward the ears
+  }
+
+  // Hair: the dark, non-skin pixels above and beside each face (inside the subject mask when there is one), drawn as strokes that fan out
+  // from a crown point and bend down with gravity, each kept inside the hair. Bald or light-haired faces find too few pixels and get none.
+  {
+    const cd = cropData(src, rx0, ry0, rw, rh, cw, ch, ''), lum = (i) => 0.3 * cd[4 * i] + 0.59 * cd[4 * i + 1] + 0.11 * cd[4 * i + 2];
+    boxes.forEach((_, fi) => {
+      const z = skin[fi], w = z.x1 - z.x0, h = z.y1 - z.y0, zx0 = Math.max(2, Math.floor(z.x0 - 0.3 * w)), zx1 = Math.min(cw - 3, Math.ceil(z.x1 + 0.3 * w)), zy0 = Math.max(2, Math.floor(z.y0 - 0.8 * h)), zy1 = Math.min(ch - 3, Math.ceil(z.y0 + 0.5 * h));
+      const med = (ch3) => { const v = []; for (let y = Math.floor(z.y0 + 0.4 * h); y < z.y0 + 0.75 * h; y += 2) for (let x = Math.floor(z.x0 + 0.3 * w); x < z.x1 - 0.3 * w; x += 2) v.push(cd[4 * (y * cw + x) + ch3]); v.sort((p, q) => p - q); return v[v.length >> 1] || 0; };
+      const sk = [med(0), med(1), med(2)], sl = 0.3 * sk[0] + 0.59 * sk[1] + 0.11 * sk[2], hairy = new Uint8Array(N);
+      for (let y = zy0; y <= zy1; y++) for (let x = zx0; x <= zx1; x++) {
+        const i = y * cw + x;
+        if (x > z.x0 && x < z.x1 && y > z.y0 + 0.22 * h) continue;              // the face itself
+        if (mask && !inside[i]) continue;
+        if (Math.hypot(cd[4 * i] - sk[0], cd[4 * i + 1] - sk[1], cd[4 * i + 2] - sk[2]) > 70 && lum(i) < sl * 0.7) hairy[i] = 1;
+      }
+      const dense = new Uint8Array(N);                                         // 5x5 majority, so scattered pixels do not count as hair
+      let count = 0, hx0 = cw, hx1 = 0, hy0 = ch, hy1 = 0;
+      for (let y = zy0; y <= zy1; y++) for (let x = zx0; x <= zx1; x++) {
+        let t = 0;
+        for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) t += hairy[(y + dy) * cw + x + dx];
+        if (t >= 14) { dense[y * cw + x] = 1; count++; hx0 = Math.min(hx0, x); hx1 = Math.max(hx1, x); hy0 = Math.min(hy0, y); hy1 = Math.max(hy1, y); }
+      }
+      if (count < 0.15 * w * h) return;
+      const R = Math.max(hx1 - hx0, hy1 - hy0) / 2, ccx = (z.x0 + z.x1) / 2, ccy = hy0 + (z.y0 - hy0) * 0.6, gap = Math.max(7, R / 14);
+      for (let row = 0, y = hy0 + gap / 2; y < hy1; row++, y += gap) for (let x = hx0 + (row % 2 ? gap : gap / 2); x < hx1; x += gap * 1.6) {
+        const len = gap * (2.2 + ((row * 7 + Math.round(x)) % 5) * 0.5), pts = [];
+        let px = x, py = y;
+        for (let t = 0; t < len; t += 2) {
+          const xi = Math.round(px), yi = Math.round(py);
+          if (xi < 0 || xi >= cw || yi < 0 || yi >= ch || !dense[yi * cw + xi]) break;
+          pts.push([px, py]);
+          let dx = px - ccx, dy = py - ccy; const d = Math.hypot(dx, dy) || 1;
+          dx = dx / d; dy = dy / d + 0.6;                                          // away from the crown, pulled down
+          const m = Math.hypot(dx, dy); px += 2 * dx / m; py += 2 * dy / m;
+        }
+        if (pts.length >= 4) add(sample(pts, false));
+      }
+    });
   }
   return ox.length ? { ox, oy, faces: boxes.length } : null;
 }

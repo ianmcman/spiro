@@ -107,14 +107,14 @@ function picObject(m) {                // a client's picture description -> what
   if (!held) throw new HttpError(410, 'picture ' + (m && m.id) + ' is not on the server');
   const thr = num(m.thr, 5, 95, 30), detail = Math.round(num(m.detail, 96, 4096, 320));
   // a vector drawing comes with its terms already built (the thresholds and detail do not apply to it)
-  return { src: held.src, name: String(m.name || '').slice(0, 60), thr, detail, match: !!m.match, lines: !!held.lines,
-    key: held.paths ? thr + ',' + detail : '', T: held.paths ? vectorTerms(m.id, held.paths) : null };
+  return { src: held.src, name: String(m.name || '').slice(0, 60), thr, detail, match: !!m.match, clean: !!m.clean, lines: !!held.lines,
+    key: held.paths ? thr + ',' + detail + (m.clean ? ',c' : '') : '', T: held.paths ? vectorTerms(m.id, held.paths) : null };
 }
-function picTerms(id, thr, detail) {
-  const key = id + '|' + thr + '|' + detail;
+function picTerms(id, thr, detail, clean) {
+  const key = id + '|' + thr + '|' + detail + (clean ? '|c' : '');
   let buf = picTermsCache.get(key);
   if (!buf) {
-    const T = E.picTerms(picObject({ id, thr, detail, match: true }));
+    const T = E.picTerms(picObject({ id, thr, detail, clean, match: true }));
     buf = T ? packTerms(T) : Buffer.alloc(0);
     picTermsCache.set(key, buf);
   }
@@ -267,13 +267,14 @@ function ffmpeg(args, frames, ext, o = {}) {
     ff.on('error', (e) => { clearTimeout(kill); reject(e); });
     ff.on('close', (code) => {
       clearTimeout(kill);
-      if (code) { fs.rm(file, () => {}); return reject(new Error('ffmpeg exit ' + code + ': ' + err.slice(-300))); }
+      if (code || (o.job && o.job.cancel)) { fs.rm(file, () => {}); return reject(new Error('ffmpeg exit ' + code + ': ' + err.slice(-300))); }
       const buf = fs.readFileSync(file); fs.rm(file, () => {});
       resolve(buf);
     });
     ff.stdin.on('error', () => {});
     (async () => {
       for (let f = 0; f < frames.count; f++) {
+        if (o.job) { o.job.done = f; o.job.total = frames.count; if (o.job.cancel) { ff.kill('SIGKILL'); return; } }
         const fr = frames.at(f), px = Buffer.from(fr.buffer, fr.byteOffset, fr.length);
         if (!ff.stdin.write(px)) await new Promise((r) => ff.stdin.once('drain', r));
         await new Promise((r) => setImmediate(r));                      // let other requests run between frames
@@ -335,17 +336,44 @@ function pdfFile(wPt, hPt, content, alpha) {
     'trailer\n<< /Size ' + (o.length + 1) + ' /Root 1 0 R >>\nstartxref\n' + x0 + '\n%%EOF\n';
   return Buffer.from(s, 'latin1');
 }
+// Reorders pen strokes to cut the pen's travel: from the pen's position always take the nearest stroke end, drawing that stroke backwards
+// when the far end is the near one. Greedy, O(n^2): past 4000 strokes the order is left as drawn.
+function orderStrokes(strokes) {
+  const gap = (ss) => { let t = 0; for (let i = 1; i < ss.length; i++) { const a = ss[i - 1][ss[i - 1].length - 1], b = ss[i][0]; t += Math.hypot(a[0] - b[0], a[1] - b[1]); } return t; };
+  const before = gap(strokes);
+  if (strokes.length < 3 || strokes.length > 4000) return { strokes, before, after: before };
+  const left = strokes.slice(), out = [left.shift()];
+  while (left.length) {
+    const e = out[out.length - 1][out[out.length - 1].length - 1];
+    let bi = 0, bd = Infinity, flip = false;
+    for (let i = 0; i < left.length; i++) {
+      const st = left[i], d0 = Math.hypot(st[0][0] - e[0], st[0][1] - e[1]), d1 = Math.hypot(st[st.length - 1][0] - e[0], st[st.length - 1][1] - e[1]);
+      if (d0 < bd) { bd = d0; bi = i; flip = false; }
+      if (d1 < bd) { bd = d1; bi = i; flip = true; }
+    }
+    const st = left.splice(bi, 1)[0];
+    out.push(flip ? st.reverse() : st);
+  }
+  return { strokes: out, before, after: gap(out) };
+}
 function renderPrint(body, fmt, o = {}) {
   const { all, pw, ph, s, tx, ty } = layout(body, o);
   if (fmt === 'plotter') {                       // one path per layer (one pen per layer), thin black lines, no background
+    const pen = num(o.pen, 0.05, 5, 0.3);
+    let before = 0, after = 0;
     const out = all.map((m, n) => {
+      const strokes = [];                          // a stroke is a run of points drawn with the pen down; pen lifts split them
+      pathData(m, 0, m.N, tx, ty, 0.05, (mv, x, y) => { if (mv) strokes.push([]); strokes[strokes.length - 1].push([x, y]); });
+      const ord = orderStrokes(strokes);
+      before += ord.before; after += ord.after;
       let d = '';
-      pathData(m, 0, m.N, tx, ty, 0.05, (mv, x, y) => { d += (mv ? 'M' : 'L') + x.toFixed(2) + ' ' + y.toFixed(2); });
+      for (const st of ord.strokes) st.forEach(([x, y], j) => { d += (j ? 'L' : 'M') + x.toFixed(2) + ' ' + y.toFixed(2); });
       return '<path id="layer-' + (n + 1) + '" d="' + d + '" stroke="rgb(' + (o.colors ? E.inkRGB(m.p, 0.5) : [0, 0, 0]).join(',') + ')"/>';
     });
     const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="' + pw + 'mm" height="' + ph + 'mm" viewBox="0 0 ' + pw + ' ' + ph + '">' +
-      '<g fill="none" stroke-width="0.3" stroke-linecap="round" stroke-linejoin="round">' + out.join('') + '</g></svg>';
-    return { type: 'image/svg+xml', buf: Buffer.from(svg), ext: 'svg' };
+      '<!-- pen-up travel ' + Math.round(before) + ' mm in drawing order, ' + Math.round(after) + ' mm ordered -->' +
+      '<g fill="none" stroke-width="' + pen + '" stroke-linecap="round" stroke-linejoin="round">' + out.join('') + '</g></svg>';
+    return { type: 'image/svg+xml', buf: Buffer.from(svg), ext: 'svg', travel: { before: Math.round(before), after: Math.round(after) } };
   }
   const MM = 72 / 25.4, cm = !!o.cmyk, col = (c, stroke) => cm ? cmykOf(c).map((v) => v.toFixed(3)).join(' ') + (stroke ? ' K' : ' k') : c.map((v) => (v / 255).toFixed(3)).join(' ') + (stroke ? ' RG' : ' rg');
   let c = '1 J 1 j\n/G0 gs\n';
@@ -436,7 +464,8 @@ async function splitPic(id, k) {
 /* ---------------------------------------------------------------- subject cut-out (neural network) */
 // U2-Net (small, Apache-2.0) finds the main subject of a picture; the picture is then redrawn with only that subject
 // (or as its black silhouette), which the usual edge tracing turns into a clean outline instead of background clutter.
-const MODEL = process.env.MODEL_PATH || path.join(__dirname, 'models', 'u2netp.onnx');
+// the full U2-Net (176 MB) when it is there, else the small one (4.6 MB)
+const MODEL = process.env.MODEL_PATH || ['u2net', 'u2netp'].map((n) => path.join(__dirname, 'models', n + '.onnx')).find((f) => fs.existsSync(f));
 let seg = null;
 async function subjectMask(src) {
   if (!seg) {
@@ -499,7 +528,7 @@ const DESIGN_ID = /^[0-9a-f]{8}$/, designFile = (id, ext) => path.join(DATA, 'de
 function plainOf(raw) {
   const q = cleanP(raw), o = {};
   for (const k of Object.keys(E.DEFAULTS)) o[k] = q[k];
-  if (q.pic) o.pic = { id: raw.pic.id, thr: q.pic.thr, detail: q.pic.detail, match: q.pic.match, name: q.pic.name };
+  if (q.pic) o.pic = { id: raw.pic.id, thr: q.pic.thr, detail: q.pic.detail, match: q.pic.match, clean: !!raw.pic.clean, name: q.pic.name };
   return o;
 }
 function listDesigns() {
@@ -536,6 +565,7 @@ const jobs = new Map();                       // id -> { id, kind, label, fmt, s
 const JOB_ID = /^[0-9a-f]{10}$/, jobFile = (id, ext) => path.join(DATA, 'renders', id + ext);
 let jobChain = Promise.resolve();
 const saveJob = (j) => fs.writeFileSync(jobFile(j.id, '.json'), JSON.stringify(j));
+const pubJob = (j) => { const { spec, ...rest } = j; return Object.assign(rest, { rerun: !!spec }); };       // the stored request stays on the server
 for (const f of fs.readdirSync(path.join(DATA, 'renders')).filter((x) => x.endsWith('.json'))) {
   try {
     const j = JSON.parse(fs.readFileSync(path.join(DATA, 'renders', f), 'utf8'));
@@ -566,16 +596,20 @@ function startJob(b) {
   if (!(fmt in EXT) || (kind === 'batch' && !['png', 'jpg', 'svg', 'pdf', 'plotter'].includes(fmt))) throw new HttpError(400, 'bad format');
   const names = kind === 'batch' ? (Array.isArray(b.names) ? b.names : []).map((x) => String(x).trim()).filter(Boolean).slice(0, 100) : [];
   if (kind === 'batch' && !names.length) throw new HttpError(400, 'no names');
-  const o = { long: true, size: b.size, fps: b.fps, seconds: b.seconds, page: String(b.page || 'a4'), margin: b.margin, cmyk: !!b.cmyk, colors: !!b.colors };
-  const j = { id: crypto.randomBytes(5).toString('hex'), kind, fmt, label: safeName(b.label || (kind === 'batch' ? 'Batch' : 'Spirograph')), state: 'queued', created: Date.now(), ext: kind === 'batch' ? 'zip' : EXT[fmt] };
+  const o = { long: true, size: b.size, fps: b.fps, seconds: b.seconds, page: String(b.page || 'a4'), margin: b.margin, cmyk: !!b.cmyk, colors: !!b.colors, pen: b.pen };
+  const j = { id: crypto.randomBytes(5).toString('hex'), kind, fmt, label: safeName(b.label || (kind === 'batch' ? 'Batch' : 'Spirograph')), state: 'queued', created: Date.now(), ext: kind === 'batch' ? 'zip' : EXT[fmt], spec: b };
+  o.job = j;
   jobs.set(j.id, j); saveJob(j);
   jobChain = jobChain.then(async () => {
-    j.state = 'running'; saveJob(j);
+    if (j.cancel) { j.state = 'cancelled'; j.finished = Date.now(); saveJob(j); return; }
+    j.state = 'running'; j.started = Date.now(); saveJob(j);
     try {
       let buf;
       if (kind === 'batch') {
         const files = [];
         for (const [n, name] of names.entries()) {
+          if (j.cancel) throw new HttpError(499, 'cancelled');
+          j.done = n; j.total = names.length;
           await needPics(b.P);
           const sub = Object.assign({}, b, { P: Object.assign({}, b.P, { text: name, pic: undefined }), layers: [] });
           const r = await renderAny(sub, fmt, Object.assign({}, o, { maxPx: 4096 }));
@@ -587,12 +621,16 @@ function startJob(b) {
         await needPics(b.P, ...(Array.isArray(b.layers) ? b.layers : []));
         buf = (await renderAny(b, fmt, o)).buf;
       }
+      if (j.cancel) throw new HttpError(499, 'cancelled');
       fs.writeFileSync(jobFile(j.id, '.' + j.ext), buf);
       j.bytes = buf.length; j.state = 'done';
-    } catch (e) { console.error(e); j.state = 'error'; j.error = e instanceof HttpError ? e.message : String(e.message || e).slice(0, 200); }
+    } catch (e) {
+      if (j.cancel) j.state = 'cancelled';
+      else { console.error(e); j.state = 'error'; j.error = e instanceof HttpError ? e.message : String(e.message || e).slice(0, 200); }
+    }
     j.finished = Date.now(); saveJob(j);
     console.log('job', j.id, j.kind, j.fmt, j.state, Math.round((j.finished - j.created) / 1000) + 's');
-    notify(j).catch(() => {});
+    if (j.state !== 'cancelled') notify(j).catch(() => {});
     pruneJobs();
   });
   return j;
@@ -698,7 +736,7 @@ async function api(req, res, url) {
     let id = url.searchParams.get('id') || '';
     if (bytes.length) id = await queue(() => storePic(bytes));
     const thr = Math.round(num(url.searchParams.get('thr'), 5, 95, 30)), detail = Math.round(num(url.searchParams.get('detail'), 96, 4096, 320));
-    const buf = await queue(async () => { await needPics({ pic: { id } }); return picTerms(id, thr, detail); });
+    const buf = await queue(async () => { await needPics({ pic: { id } }); return picTerms(id, thr, detail, url.searchParams.get('clean') === '1'); });
     return buf.length ? send(res, 200, buf, 'application/octet-stream', { 'X-Pic-Id': id }) : send(res, 204, '', 'text/plain', { 'X-Pic-Id': id });
   }
   if (M === 'POST' && p === '/api/pic/split') {
@@ -745,19 +783,31 @@ async function api(req, res, url) {
     if (M === 'DELETE' && !m[2]) { for (const e of ['.json', '.jpg']) fs.rmSync(designFile(m[1], e), { force: true }); return json(res, 200, { ok: true }); }
   }
   if (p === '/api/jobs') {
-    if (M === 'GET') return json(res, 200, [...jobs.values()].sort((a, b) => b.created - a.created));
-    if (M === 'POST') return json(res, 200, startJob(await jbody(2e6)));
+    if (M === 'GET') return json(res, 200, [...jobs.values()].sort((a, b) => b.created - a.created).map(pubJob));
+    if (M === 'POST') return json(res, 200, pubJob(startJob(await jbody(2e6))));
   }
-  m = /^\/api\/jobs\/([0-9a-f]{10})(\/file)?$/.exec(p);
+  m = /^\/api\/jobs\/([0-9a-f]{10})(\/file|\/cancel|\/rerun)?$/.exec(p);
   if (m && jobs.has(m[1])) {
     const j = jobs.get(m[1]);
-    if (M === 'GET' && m[2]) {
+    if (M === 'POST' && m[2] === '/cancel') {                       // a queued job never starts; a running one stops at its next frame or item
+      if (j.state !== 'queued' && j.state !== 'running') throw new HttpError(409, 'already finished');
+      j.cancel = true;
+      if (j.state === 'queued') { j.state = 'cancelled'; j.finished = Date.now(); saveJob(j); }
+      return json(res, 200, pubJob(j));
+    }
+    if (M === 'POST' && m[2] === '/rerun') {                       // the same request again, with any export options the caller changes
+      if (!j.spec) throw new HttpError(409, 'this job was made before reruns existed');
+      const ov = await jbody(1e4), keep = ['fmt', 'size', 'fps', 'seconds', 'page', 'margin', 'cmyk', 'colors', 'pen', 'label'], spec = Object.assign({}, j.spec);
+      for (const k of keep) if (ov[k] !== undefined) spec[k] = ov[k];
+      return json(res, 200, pubJob(startJob(spec)));
+    }
+    if (M === 'GET' && m[2] === '/file') {
       if (j.state !== 'done') throw new HttpError(409, 'not finished');
       const type = { mp4: 'video/mp4', gif: 'image/gif', png: 'image/png', jpg: 'image/jpeg', svg: 'image/svg+xml', pdf: 'application/pdf', zip: 'application/zip' }[j.ext];
       const data = await fs.promises.readFile(jobFile(j.id, '.' + j.ext)).catch(() => { throw new HttpError(404, 'file is gone'); });
       return send(res, 200, data, type, { 'Content-Disposition': "attachment; filename*=UTF-8''" + encodeURIComponent(j.label + ' - Spirograph.' + j.ext) });
     }
-    if (M === 'GET') return json(res, 200, j);
+    if (M === 'GET') return json(res, 200, pubJob(j));
     if (M === 'DELETE') {
       if (j.state === 'queued' || j.state === 'running') throw new HttpError(409, 'still running');
       jobs.delete(j.id);
@@ -787,4 +837,4 @@ const server = http.createServer(async (req, res) => {
   }
 });
 if (require.main === module) server.listen(PORT, () => { console.log('spirograph server on :' + PORT); dailyTimer(); });
-module.exports = { server, packTerms, cleanP };
+module.exports = { server, packTerms, cleanP, subjectMask };
