@@ -89,7 +89,12 @@ body:not(.open) .panel { display: none; }
 .note { margin: 10px 0 0; }
 .ink { margin-bottom: 10px; }
 .hidden { display: none !important; }
-.panel:not(.name-mode) .name-only, .panel.name-mode .spiro-only { display: none; }
+.panel:not(.name-mode) .name-only, .panel.name-mode .spiro-only, .panel:not(.image-mode) .image-only, .panel.image-mode .name-only { display: none; }
+#mode { grid-template-columns: repeat(3, 1fr); }
+#mode button { padding: 0 4px; font-size: 1.2rem; }
+.wide-btn { width: 100%; }
+.pic-preview { display: block; width: 100%; aspect-ratio: 1; margin: 10px 0 6px; background: var(--bg); border: 1px solid var(--field-border); border-radius: var(--radius); }
+.row output.num { border-bottom-color: transparent; }
 .foot { margin: 23px 18px 0; font-size: 1.1rem; color: var(--text-sub); }
 .foot a { color: var(--text); text-decoration: none; border-bottom: 1px solid var(--field-border); }
 .foot a:hover { color: var(--primary); border-color: var(--primary); }
@@ -271,6 +276,7 @@ body:not(.open) .fab { display: block; }
       <div class="seg first" id="mode" data-tab="design" role="radiogroup" aria-label="Mode">
         <button type="button" role="radio" aria-checked="true" data-mode="spiro">Spirograph</button>
         <button type="button" role="radio" aria-checked="false" data-mode="name">Name</button>
+        <button type="button" role="radio" aria-checked="false" data-mode="image">Image</button>
       </div>
 
       <section class="widget" data-tab="export">
@@ -299,10 +305,22 @@ body:not(.open) .fab { display: block; }
 
       <section class="widget name-only" data-tab="design">
         <h2 class="widget-header">Name</h2>
-        <div class="card">
+        <div class="card" id="name-card">
           <label class="field"><span>Name or text</span><input type="text" class="text" id="text" maxlength="80" autocomplete="off" spellcheck="false" placeholder="e.g. Ada, 12 May 2026"></label>
           <label class="row" id="row-circles"><span class="lab">Circles</span><input type="range" id="circles" min="0" max="100" step="1"><input class="num" id="o-circles" type="text" inputmode="decimal" autocomplete="off" spellcheck="false" aria-label="Circles value"></label>
           <p class="note">Press Play and a chain of rotating circles writes it out: a Fourier series of the letter strokes.</p>
+        </div>
+      </section>
+
+      <section class="widget image-only" data-tab="design">
+        <h2 class="widget-header">Image</h2>
+        <div class="card" id="image-card">
+          <button type="button" class="btn wide-btn" id="pic-btn">Choose image</button>
+          <input type="file" id="pic-file" accept="image/*" hidden>
+          <canvas id="pic-preview" class="pic-preview hidden" aria-label="Traced outline of the image"></canvas>
+          <label class="row"><span class="lab">Edge threshold</span><output class="num" id="o-picThr"></output><input type="range" id="picThr" min="5" max="95" step="1" value="30"></label>
+          <label class="row"><span class="lab">Detail</span><output class="num" id="o-picDetail"></output><input type="range" id="picDetail" min="96" max="512" step="16" value="320"></label>
+          <p class="note">The image's edges are traced as one line, then drawn by rotating circles. Works best on logos, silhouettes and clear outlines. The image stays in your browser.</p>
         </div>
       </section>
 
@@ -684,6 +702,7 @@ function geometry(p, half) {
 
 // p is the live settings object for the current pattern, or a frozen copy for a kept layer.
 function buildModel(p, w = vw, h = vh, maxN = MAX_SAMPLES) {
+  if (p.pic) return buildPic(p, w, h, maxN);
   if (p.text && p.text.trim()) return buildName(p, w, h, maxN);
   const half = Math.max(20, Math.min(w, h) / 2 - 6);
   const m = geometry(p, half);
@@ -863,8 +882,21 @@ function nameTerms(lines) {
   lines.forEach((l, i) => cx.fillText(l, (W - cx.measureText(l).width) / 2, pitch * (i + 0.5)));
   const a = cx.getImageData(0, 0, W, H).data, b = new Uint8Array(W * H);
   for (let i = 0; i < W * H; i++) b[i] = a[i * 4 + 3] > 127 ? 1 : 0;
+  const T = maskTerms(b, W, H, { n, pitch, size, len: text.length });
+  if (T) {
+    nameCache.set(key, T);
+    if (nameCache.size > 8) nameCache.delete(nameCache.keys().next().value);   // typing makes one entry per keystroke
+  }
+  return T;
+}
+// The shared half: a binary mask (1 = ink) becomes the Fourier terms of one closed path. n lines of height pitch
+// (a name), or n = 1 for a picture; len sizes the FFT and the number of terms; dots: draw lone specks as spirals;
+// minBlob: erase specks smaller than this many pixels first.
+function maskTerms(b, W, H, o) {
+  const { n, pitch, size, len } = o;
   // Blobs before thinning, with the pixel nearest each one's centre: square dots (as in ':') can thin away entirely.
-  const blobs = [], lab = new Uint8Array(W * H);
+  let blobs = [];
+  const lab = new Uint8Array(W * H);
   for (let i = 0; i < W * H; i++) {
     if (!b[i] || lab[i]) continue;
     const list = [i];
@@ -878,6 +910,10 @@ function nameTerms(lines) {
     let c = list[0], cd = Infinity;
     for (const q of list) { const d = (q % W - mx) ** 2 + (((q / W) | 0) - my) ** 2; if (d < cd) { cd = d; c = q; } }
     blobs.push({ list, c });
+  }
+  if (o.minBlob) {
+    for (const bl of blobs) if (bl.list.length < o.minBlob) for (const q of bl.list) b[q] = 0;
+    blobs = blobs.filter((bl) => bl.list.length >= o.minBlob);
   }
   // Zhang-Suen thinning: peel the glyphs down to one-pixel centrelines (the raster's empty border stays empty).
   for (let changed = true; changed;) {
@@ -925,7 +961,7 @@ function nameTerms(lines) {
     }
     // A dot (i, j, full stop) thins to a pixel or two, which would sit between two pen lifts and never show.
     // Draw it as a small filled spiral instead.
-    if (pixels <= Math.max(3, size * 0.08)) {
+    if (o.dots !== false && pixels <= Math.max(3, size * 0.08)) {
       const cxd = sx0 / pixels, cyd = sy0 / pixels, rd = Math.max(1.5, size * 0.02);
       ox.length = oy.length = from;
       for (let t = 0; t <= 1; t += 0.004) {
@@ -935,7 +971,7 @@ function nameTerms(lines) {
     }
   }
   if (!ox.length) return null;
-  const NAME_M = nameM(text.length);
+  const NAME_M = nameM(len);
   // Resample to NAME_M points evenly in time. Hops longer than 3 px are pen-up and get a reduced share
   // of time, so the circles move across them quickly without a jump sharp enough to ring.
   const L = ox.length, seg = [], tot = [0];
@@ -966,7 +1002,7 @@ function nameTerms(lines) {
     up[j] = Math.hypot(ox[k1] - ox[k], oy[k1] - oy[k]) > 3 ? 1 : 0;
   }
   // Fourier coefficients for frequencies -K..K; the DC term (the centroid) anchors the chain and is not a circle.
-  const K = Math.max(500, Math.min(NAME_M / 4, text.length * 100)), fr = [], cr = [], ci = [];
+  const K = Math.max(500, Math.min(NAME_M / 4, len * 100)), fr = [], cr = [], ci = [];
   const fre = Float64Array.from(rx), fim = Float64Array.from(ry);
   fft(fre, fim, -1);
   const c0r = fre[0] / NAME_M, c0i = fim[0] / NAME_M;
@@ -982,8 +1018,6 @@ function nameTerms(lines) {
     fr: order.map((k) => fr[k]), cr: order.map((k) => cr[k]), ci: order.map((k) => ci[k]),
     M: NAME_M, c0r, c0i, up, rx, ry, mx: (x0 + x1) / 2, my: (y0 + y1) / 2, bw: Math.max(1, x1 - x0), bh: Math.max(1, y1 - y0)
   };
-  nameCache.set(key, T);
-  if (nameCache.size > 8) nameCache.delete(nameCache.keys().next().value);   // typing makes one entry per keystroke
   return T;
 }
 
@@ -996,7 +1030,65 @@ const sliderOf = (n) => Math.round(100 * Math.log(n / 2) / Math.log(2000));
 function buildName(p, w, h, maxN) {
   const lines = nameLines(p.text.trim(), w, h), T = nameTerms(lines);
   if (!T) return buildModel(Object.assign({}, p, { text: '' }), w, h, maxN);
-  const N = nameN(T.M), sc = Math.min(0.9 * w / T.bw, (lines.length > 1 ? 0.8 : 0.55) * h / T.bh);
+  return fourierModel(p, T, w, h, Math.min(0.9 * w / T.bw, (lines.length > 1 ? 0.8 : 0.55) * h / T.bh));
+}
+// Picture: edges of the uploaded image (Sobel on a blurred grey copy, kept above a threshold relative to the
+// strong edges), then the same thinning, walk and FFT as a name. Cached per threshold and detail.
+function picTerms(pic) {
+  const key = pic.thr + ',' + pic.detail;
+  if (pic.key === key) return pic.T;
+  const k = pic.detail / Math.max(pic.src.width, pic.src.height), M = 6;       // M: white margin; edges within 2 px of the picture's own border are ignored, so its frame isn't traced
+  const W = Math.round(pic.src.width * k) + 2 * M, H = Math.round(pic.src.height * k) + 2 * M;
+  const cv = document.createElement('canvas'), cx = cv.getContext('2d', { willReadFrequently: true });
+  cv.width = W; cv.height = H;
+  cx.fillStyle = '#fff'; cx.fillRect(0, 0, W, H);
+  cx.drawImage(pic.src, M, M, W - 2 * M, H - 2 * M);
+  const d = cx.getImageData(0, 0, W, H).data, g = new Float32Array(W * H), mag = new Float32Array(W * H);
+  for (let i = 0; i < W * H; i++) g[i] = 0.299 * d[i * 4] + 0.587 * d[i * 4 + 1] + 0.114 * d[i * 4 + 2];
+  const bl = new Float32Array(W * H);
+  for (let y = 1; y < H - 1; y++) for (let x = 1; x < W - 1; x++) {
+    const i = y * W + x;
+    bl[i] = (g[i - W - 1] + 2 * g[i - W] + g[i - W + 1] + 2 * g[i - 1] + 4 * g[i] + 2 * g[i + 1] + g[i + W - 1] + 2 * g[i + W] + g[i + W + 1]) / 16;
+  }
+  let max = 1e-6;
+  for (let y = 2; y < H - 2; y++) for (let x = 2; x < W - 2; x++) {
+    const i = y * W + x;
+    const gx = bl[i - W + 1] + 2 * bl[i + 1] + bl[i + W + 1] - bl[i - W - 1] - 2 * bl[i - 1] - bl[i + W - 1];
+    const gy = bl[i + W - 1] + 2 * bl[i + W] + bl[i + W + 1] - bl[i - W - 1] - 2 * bl[i - W] - bl[i - W + 1];
+    mag[i] = Math.hypot(gx, gy);
+    if (mag[i] > max) max = mag[i];
+  }
+  const hist = new Uint32Array(256);
+  for (let i = 0; i < W * H; i++) hist[Math.min(255, mag[i] / max * 255 | 0)]++;
+  let acc = 0, p99 = 255;
+  for (let v = 0; v < 256; v++) { acc += hist[v]; if (acc >= 0.99 * W * H) { p99 = Math.max(8, v) / 255 * max; break; } }   // robust to a few harsh pixels
+  const b = new Uint8Array(W * H), t = pic.thr / 100 * p99;
+  for (let y = M + 2; y < H - M - 2; y++) for (let x = M + 2; x < W - M - 2; x++) b[y * W + x] = mag[y * W + x] > t ? 1 : 0;
+  pic.T = maskTerms(b, W, H, { n: 1, pitch: H, size: 0, len: 80, dots: false, minBlob: Math.max(6, Math.round(pic.detail / 40)) });
+  pic.key = key;
+  return pic.T;
+}
+function buildPic(p, w, h, maxN) {
+  const T = picTerms(p.pic);
+  if (!T) return buildModel(Object.assign({}, p, { pic: null }), w, h, maxN);
+  if (p.pic === P.pic && w === vw) drawPicPreview(T);
+  return fourierModel(p, T, w, h, Math.min(0.9 * w / T.bw, 0.8 * h / T.bh));
+}
+// Small outline of the traced path, so threshold and detail can be tuned before drawing.
+function drawPicPreview(T) {
+  const c = $('pic-preview'), ctx = c.getContext('2d'), s = Math.min(c.clientWidth || 200, 400), d = Math.min(window.devicePixelRatio || 1, 2);
+  c.width = c.height = Math.round(s * d);
+  ctx.setTransform(d, 0, 0, d, 0, 0);
+  const k = 0.92 * s / Math.max(T.bw, T.bh);
+  ctx.strokeStyle = 'rgba(165,167,152,0.8)'; ctx.lineWidth = 0.7; ctx.beginPath();
+  for (let j = 0; j < T.M; j++) {
+    const x = s / 2 + (T.rx[j] - T.mx) * k, y = s / 2 + (T.ry[j] - T.my) * k;
+    if (j && !T.up[j]) ctx.lineTo(x, y); else ctx.moveTo(x, y);
+  }
+  ctx.stroke();
+}
+function fourierModel(p, T, w, h, sc) {
+  const N = nameN(T.M);
   const m = { p, fourier: true, T, sc, N, done: N + 1, cx: w / 2, cy: h / 2, dir: 1, clo: { k: 1 },
     xs: new Float32Array(N + 1), ys: new Float32Array(N + 1), up: new Uint8Array(N + 1) };
   const K = Math.min(T.fr.length, p.circles || T.fr.length);   // the biggest K circles
@@ -1104,7 +1196,7 @@ function paintBase() {
 }
 function keepLayer() {
   if (!model || !drawn || layers.length >= MAX_LAYERS) return;
-  const m = buildModel(Object.assign({}, P));                 // frozen copy of the settings
+  const m = buildModel(Object.assign({}, P, P.pic && { pic: Object.assign({}, P.pic) }));   // frozen copy of the settings
   fill(m, m.N);
   m.ss = m.dp = null;                                         // only the wheel overlay needs these
   layers.push(m);
@@ -1308,6 +1400,13 @@ function syncUI() {
   $('wheelTeeth').value = P.wheelTeeth;
   $('row-hue').classList.toggle('dim', P.ink !== 'cycle');
   if (P.text.trim()) setMode('name');
+  else if (P.pic) setMode('image');
+  if (P.pic) {
+    $('picThr').value = P.pic.thr; $('picDetail').value = P.pic.detail;
+    $('o-picThr').value = P.pic.thr; $('o-picDetail').value = P.pic.detail;
+  }
+  $('pic-preview').classList.toggle('hidden', !P.pic);
+  $('pic-btn').textContent = P.pic ? 'Choose another image' : 'Choose image';
 }
 
 // Slider readouts are text boxes: type a number, Enter or tap away to apply, Esc to cancel.
@@ -1319,7 +1418,7 @@ function showNum(id, v) {
 }
 function syncCircles() {
   showNum('circles', model && model.fourier ? model.K : P.circles);
-  $('row-circles').classList.toggle('dim', !P.text.trim());
+  $('row-circles').classList.toggle('dim', !P.text.trim() && !P.pic);
 }
 
 function updateReadout() {
@@ -1504,11 +1603,12 @@ function loadState() {
 }
 function stateHash() {
   // Leave out settings the current mode doesn't use.
-  const named = !!P.text, skip = (k) => named ? !['text', 'circles', 'ink', 'hue', 'weight', 'speed', 'showWheels'].includes(k) : k === 'text' || k === 'circles' || (/^w2/.test(k) && !P.second);
+  const named = !!P.text || !!P.pic, skip = (k) => named ? !['text', 'circles', 'ink', 'hue', 'weight', 'speed', 'showWheels'].includes(k) : k === 'text' || k === 'circles' || (/^w2/.test(k) && !P.second);
   const out = [];
   pack(out, P, KEYS, (k) => !skip(k));
-  out.push(layers.length);
-  for (const l of layers) pack(out, l.p, LAYER_KEYS);
+  const kept = layers.filter((l) => !l.p.pic);                     // a picture can't travel in a link
+  out.push(kept.length);
+  for (const l of kept) pack(out, l.p, LAYER_KEYS);
   return out.every((b) => !b) ? '' : '#p=' + toB64(out);
 }
 let saveTimer = 0;
@@ -1548,18 +1648,47 @@ function setTab(t) {
 
 // Any other way of setting the pattern replaces a name.
 // The panel shows one mode's controls; the Name tab keeps the last name to bring back.
-let mode = 'spiro', lastText = '';
+let mode = 'spiro', lastText = '', lastPic = null, picTimer = 0;
 function setMode(m) {
   mode = m;
-  $('panel').classList.toggle('name-mode', m === 'name');
+  $('panel').classList.toggle('name-mode', m !== 'spiro');
+  $('panel').classList.toggle('image-mode', m === 'image');
+  const host = $(m === 'image' ? 'image-card' : 'name-card');
+  host.insertBefore($('row-circles'), host.querySelector('.note'));             // one Circles slider, in whichever card is showing
   document.querySelectorAll('#mode button').forEach((b) => b.setAttribute('aria-checked', String(b.dataset.mode === m)));
-  if (m === 'name' && ['size', 'gallery'].includes($('panel').dataset.tab)) setTab('design');   // those tabs hide in Name mode
+  if (m !== 'spiro' && ['size', 'gallery'].includes($('panel').dataset.tab)) setTab('design');   // those tabs hide outside Spirograph
 }
 function dropText() {
+  if (P.pic) { lastPic = P.pic; P.pic = null; }
   if (P.text) { lastText = P.text; P.text = ''; $('text').value = ''; }
   setMode('spiro');
 }
 function geometryChanged(keepText) { if (rec && rec.state !== 'inactive') rec.stop(); if (!keepText) { dropText(); presetName = ''; } needRebuild = true; paused = true; schedule(); }
+
+// Read an image file into a canvas (long side up to 1024) for picTerms; shown straight away.
+function loadPic(file) {
+  if (file.size > 25e6) { alert('That image is over 25 MB.'); return; }
+  const rd = new FileReader();
+  rd.onload = () => {
+    const img = new Image();
+    img.onload = () => {
+      const k = Math.min(1, 1024 / Math.max(img.naturalWidth, img.naturalHeight)), src = document.createElement('canvas');
+      src.width = Math.max(1, Math.round(img.naturalWidth * k)); src.height = Math.max(1, Math.round(img.naturalHeight * k));
+      const c = src.getContext('2d');
+      c.fillStyle = '#fff'; c.fillRect(0, 0, src.width, src.height);        // transparent areas read as white
+      c.drawImage(img, 0, 0, src.width, src.height);
+      if (P.text) { lastText = P.text; P.text = ''; }
+      P.pic = { src, name: file.name.replace(/\.[^.]*$/, ''), thr: parseFloat($('picThr').value), detail: parseFloat($('picDetail').value), key: '', T: null };
+      setMode('image');
+      syncUI();
+      geometryChanged(true);
+      paused = false;                                                        // a new picture draws itself
+    };
+    img.onerror = () => alert('That file could not be read as an image.');
+    img.src = rd.result;
+  };
+  rd.readAsDataURL(file);
+}
 
 function syncPlay() {
   const playing = !paused && drawn < N;
@@ -1681,10 +1810,17 @@ function init() {
   document.querySelectorAll('#mode button').forEach((b) => b.addEventListener('click', () => {
     const m = b.dataset.mode;
     if (m === mode) return;
-    if (m === 'spiro') geometryChanged();              // drops the name
-    else {
+    if (m === 'spiro') geometryChanged();              // drops the name or picture
+    else if (m === 'name') {
+      if (P.pic) { lastPic = P.pic; P.pic = null; }
       setMode('name');
-      if (lastText) { P.text = lastText; syncUI(); geometryChanged(true); }
+      if (lastText) P.text = lastText;
+      syncUI(); geometryChanged(true);
+    } else {
+      if (P.text) { lastText = P.text; P.text = ''; }
+      P.pic = lastPic;
+      setMode('image');
+      syncUI(); geometryChanged(true);
     }
   }));
   let textTimer = 0;
@@ -1791,6 +1927,18 @@ function init() {
   $('gif').addEventListener('click', saveGIF);
   $('save').addEventListener('click', savePNG);
   $('jpg').addEventListener('click', saveJPG);
+  // picture mode: choose a file, then tune the edge threshold and detail
+  $('pic-btn').addEventListener('click', () => $('pic-file').click());
+  $('pic-file').addEventListener('change', () => { const f = $('pic-file').files[0]; $('pic-file').value = ''; if (f) loadPic(f); });
+  for (const id of ['picThr', 'picDetail']) {
+    $(id).addEventListener('input', () => {
+      if (!P.pic) return;
+      P.pic[id === 'picThr' ? 'thr' : 'detail'] = parseFloat($(id).value);
+      $('o-' + id).value = $(id).value;
+      clearTimeout(picTimer);
+      picTimer = setTimeout(() => geometryChanged(true), 120);          // edge detection is quick but not per-pixel-of-drag quick
+    });
+  }
   $('w2fit').addEventListener('click', () => { fitReach(P); syncUI(); geometryChanged(); });
 
   // panel: hidden on phones, open on desktop
@@ -2087,7 +2235,7 @@ async function saveJPG() {
 // "Ian - Spirograph", "Rose window - Spirograph", "Circle inside circle 105-40 - Spirograph"
 let presetName = '';
 function fileLabel() {
-  const t = P.text.trim();
+  const t = P.text.trim() || (P.pic && P.pic.name);
   let s = t || presetName || P.wheelShape + ' ' + P.side + ' ' + P.ringShape + (P.sizing === 'teeth' ? ' ' + P.ringTeeth + '-' + P.wheelTeeth : '');
   s = s.replace(/[\\/:*?"<>|\x00-\x1f]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60) || 'Pattern';
   return s.charAt(0).toUpperCase() + s.slice(1) + ' - Spirograph';
