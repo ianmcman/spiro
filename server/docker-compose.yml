@@ -1,0 +1,21 @@
+# Homelab Spirograph: the same page as the public site, with name and picture tracing and exports done on the server.
+# LAN/VPN only: put it behind your reverse proxy on an internal hostname, never on the public internet.
+services:
+  spirograph-lab:
+    build:
+      context: ..
+      dockerfile: server/Dockerfile
+    image: spirograph-lab:local
+    container_name: spirograph-lab
+    ports:
+      - "${LAB_PORT:-8099}:8080"
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=1g,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    mem_limit: 3g
+    cpus: 4

@@ -122,6 +122,23 @@ python3 -m http.server 8080 -d site
 
 Open http://localhost:8080/.
 
+## Homelab server build
+
+`server/` is a second, private build for a homelab: the same page, served by a small Node server that does the heavy work itself.
+
+- **Tracing:** names and uploaded pictures are traced into Fourier terms on the server and sent to the browser, so phones skip the thinning and FFT. The server's picture Detail goes up to 1536 px.
+- **Exports:** PNG (up to 8192 px, 36 megapixels), JPG, SVG, a 480 px GIF and a 1080p H.264 MP4 are rendered on the server. The MP4 is a real render of the whole drawing, not a screen capture.
+- **Same code:** the geometry, FFT, tracing and stroking code is cut out of `site/index.html` between the `ENGINE-BEGIN` and `ENGINE-END` markers and run in Node with `@napi-rs/canvas`, so the server draws what the browser would. Spirograph patterns match exactly; names differ slightly because text is rasterised by Skia instead of the browser.
+- **Not on the server:** the live drawing, the wheels overlay and the pattern model stay in the browser, because the animation needs them every frame.
+- **Private:** it sends `noindex`, serves no service worker and has no authentication. Put it on a LAN/VPN-only hostname.
+
+```sh
+cd server
+docker compose up -d --build     # http://HOST:8099/ ; LAB_PORT in .env changes the port
+```
+
+The image is Node 22 on Alpine with ffmpeg. Exports run one at a time. `cd server && npm install && node test.js` prints checksums of a few models for comparing the engine against the browser.
+
 ## Run on the homelab
 
 ```sh
