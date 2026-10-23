@@ -1,11 +1,13 @@
 // Homelab build of Spirograph. Serves the same page as the public site, plus an API that does the heavy work:
-// tracing names and uploaded pictures into Fourier terms, and rendering PNG, JPG, SVG, GIF and MP4 exports.
+// tracing names and uploaded pictures into Fourier terms, rendering PNG, JPG, SVG, GIF, MP4, PDF and plotter-SVG exports,
+// splitting a picture into colour layers, and keeping saved designs and background render jobs on disk.
 // The page's engine (geometry, FFT, tracing, stroking) is the page's own code, run here by ./engine.js.
 const http = require('http');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
+const zlib = require('zlib');
 const { spawn } = require('child_process');
 const E = require('./engine');
 const { loadImage } = require('@napi-rs/canvas');
@@ -13,6 +15,10 @@ const { loadImage } = require('@napi-rs/canvas');
 const SITE = process.env.SITE_DIR || path.join(__dirname, '..', 'site');
 const PORT = +process.env.PORT || 8080;
 const MAX_BODY = 30e6;
+const DATA = process.env.DATA_DIR || path.join(__dirname, '..', 'data');          // saved designs, pictures, finished renders
+const PUBLIC_URL = (process.env.PUBLIC_URL || '').replace(/\/$/, '');             // used in notification links
+const NTFY_URL = process.env.NTFY_URL || '', NTFY_TOKEN = process.env.NTFY_TOKEN || '', HA_WEBHOOK_URL = process.env.HA_WEBHOOK_URL || '';
+for (const d of ['pics', 'designs', 'renders']) fs.mkdirSync(path.join(DATA, d), { recursive: true });
 const TAU = Math.PI * 2;
 
 /* ---------------------------------------------------------------- small helpers */
@@ -46,11 +52,11 @@ function packTerms(T) {
 }
 
 /* ---------------------------------------------------------------- pictures */
-const pics = new Lru(8);            // id -> { src canvas }: the decoded picture, kept so sliders and exports don't re-upload it
+const pics = new Lru(24);           // id -> { src canvas }: the decoded picture, kept so sliders and exports don't re-upload it
 const picTermsCache = new Lru(16);  // id|thr|detail -> packed terms
-async function storePic(bytes) {
-  const id = crypto.createHash('sha1').update(bytes).digest('hex').slice(0, 12);
-  if (pics.get(id)) return id;
+const PIC_ID = /^[0-9a-f]{12}$/, picFile = (id) => path.join(DATA, 'pics', id);
+// Every upload is also kept on disk, so saved designs and a restarted server still have their pictures.
+async function decodePic(id, bytes) {
   let img;
   try { img = await loadImage(bytes); } catch (_) { throw new HttpError(415, 'That file could not be read as an image'); }
   const k = Math.min(1, 2048 / Math.max(img.width, img.height)), src = E.createCanvas(Math.max(1, Math.round(img.width * k)), Math.max(1, Math.round(img.height * k)));
@@ -58,7 +64,21 @@ async function storePic(bytes) {
   c.fillStyle = '#fff'; c.fillRect(0, 0, src.width, src.height);                // transparent areas read as white
   c.drawImage(img, 0, 0, src.width, src.height);
   pics.set(id, { src });
+}
+async function storePic(bytes) {
+  const id = crypto.createHash('sha1').update(bytes).digest('hex').slice(0, 12);
+  if (!pics.get(id)) await decodePic(id, bytes);
+  if (!fs.existsSync(picFile(id))) fs.writeFileSync(picFile(id), bytes);
   return id;
+}
+// Make sure every picture the settings mention is decoded (from disk if need be) before the synchronous cleanP.
+async function needPics(...ps) {
+  for (const p of ps) {
+    const id = p && p.pic && p.pic.id;
+    if (typeof id !== 'string' || pics.get(id)) continue;
+    if (!PIC_ID.test(id) || !fs.existsSync(picFile(id))) throw new HttpError(410, 'picture ' + id + ' is not on the server');
+    await decodePic(id, fs.readFileSync(picFile(id)));
+  }
 }
 function picObject(m) {                // a client's picture description -> what the engine's picTerms expects
   const held = m && typeof m.id === 'string' && pics.get(m.id);
@@ -150,11 +170,11 @@ function models(body) {
   const layers = (Array.isArray(body.layers) ? body.layers : []).slice(0, 24).map((l) => build(cleanP(l), vw, vh));
   return { vw, vh, layers, cur: build(cleanP(body.P), vw, vh) };
 }
-function renderStill(body, fmt) {
+function renderStill(body, fmt, maxPx = 8192) {
   const { vw, vh, layers, cur } = models(body);
   const all = layers.concat([cur]), R = region(bounds(all), vw, vh);
   // up to 8x the screen, 8192 px on the long side, 36 megapixels
-  const scale = Math.min(8, 8192 / Math.max(R.w, R.h), Math.sqrt(36e6 / (R.w * R.h)));
+  const scale = Math.min(8, maxPx / Math.max(R.w, R.h), Math.sqrt(36e6 / (R.w * R.h)));
   const cv = E.createCanvas(Math.round(R.w * scale), Math.round(R.h * scale)), ctx = cv.getContext('2d');
   const bg = fmt === 'jpg' ? (body.bg || '#282923') : body.bg;                  // JPEG has no alpha
   if (bg && /^#[0-9a-f]{6}$/i.test(bg)) { ctx.fillStyle = bg; ctx.fillRect(0, 0, cv.width, cv.height); }
@@ -165,12 +185,15 @@ function renderStill(body, fmt) {
 }
 // Vector export: points closer than 0.25 px to the last are dropped; colour-cycled or picture-matched
 // patterns are split into coloured paths.
+function chunks(m) {
+  const match = E.matching(m), step = match ? Math.ceil(m.N / 400) : m.p.ink === 'cycle' ? Math.ceil(m.N / 90) : m.N, out = [];
+  for (let i = 0; i < m.N; i += step) { const e = Math.min(m.N, i + step); out.push([i, e, match ? E.picColor(m, i, e) : E.inkRGB(m.p, i / m.N)]); }
+  return out;
+}
 function renderSVG(body) {
   const { vw, vh, layers, cur } = models(body), all = layers.concat([cur]), R = region(bounds(all), vw, vh), out = [];
   for (const m of all) {
-    const match = E.matching(m), step = match ? Math.ceil(m.N / 400) : m.p.ink === 'cycle' ? Math.ceil(m.N / 90) : m.N;
-    for (let i = 0; i < m.N; i += step) {
-      const e = Math.min(m.N, i + step), c = match ? E.picColor(m, i, e) : E.inkRGB(m.p, i / m.N);
+    for (const [i, e, c] of chunks(m)) {
       let lx = m.xs[i], ly = m.ys[i], d = 'M' + lx.toFixed(1) + ' ' + ly.toFixed(1);
       for (let j = i + 1; j <= e; j++) {
         const x = m.xs[j], y = m.ys[j], pen = m.up && m.up[j];
@@ -208,12 +231,14 @@ function frameSource(body, side) {
     }
   };
 }
-function ffmpeg(args, frames, ext) {
+function ffmpeg(args, frames, ext, o = {}) {
   const file = path.join(os.tmpdir(), 'spiro-' + crypto.randomBytes(6).toString('hex') + '.' + ext);
   return new Promise((resolve, reject) => {
-    const ff = spawn('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-y', '-f', 'rawvideo', '-pix_fmt', 'rgba', ...args, file], { stdio: ['pipe', 'ignore', 'pipe'] });
+    const av = ['-hide_banner', '-loglevel', 'error', '-y', '-f', 'rawvideo', '-pix_fmt', 'rgba', ...args, file];
+    // background jobs run at low priority so tracing and quick exports stay responsive
+    const ff = o.long ? spawn('nice', ['-n', '10', 'ffmpeg', ...av], { stdio: ['pipe', 'ignore', 'pipe'] }) : spawn('ffmpeg', av, { stdio: ['pipe', 'ignore', 'pipe'] });
     let err = '';
-    const kill = setTimeout(() => ff.kill('SIGKILL'), 240e3);
+    const kill = setTimeout(() => ff.kill('SIGKILL'), o.long ? 3.6e6 : 240e3);
     ff.stderr.on('data', (d) => { err += d; });
     ff.on('error', (e) => { clearTimeout(kill); reject(e); });
     ff.on('close', (code) => {
@@ -227,22 +252,279 @@ function ffmpeg(args, frames, ext) {
       for (let f = 0; f < frames.count; f++) {
         const fr = frames.at(f), px = Buffer.from(fr.buffer, fr.byteOffset, fr.length);
         if (!ff.stdin.write(px)) await new Promise((r) => ff.stdin.once('drain', r));
+        await new Promise((r) => setImmediate(r));                      // let other requests run between frames
       }
       ff.stdin.end();
     })().catch(reject);
   });
 }
-async function renderAnimation(body, fmt) {
-  const gif = fmt === 'gif', side = gif ? 480 : 1080, fps = gif ? 25 : 30, seconds = gif ? 6 : Math.round(num(body.seconds, 3, 20, 9)), hold = Math.round(fps * 1.5);
+// o: { long } for a background job (up to 60 s, 4K, 60 fps), { size, fps } its choices.
+async function renderAnimation(body, fmt, o = {}) {
+  const gif = fmt === 'gif', side = gif ? 480 : o.long ? Math.round(num(o.size, 480, 2160, 1080)) & ~1 : 1080, fps = gif ? 25 : o.long ? Math.round(num(o.fps, 24, 60, 30)) : 30;
+  const seconds = gif ? 6 : Math.round(num(o.long ? o.seconds : body.seconds, 3, o.long ? 60 : 20, 9)), hold = Math.round(fps * 1.5);
   const src = frameSource(body, side), draw = fps * seconds, total = draw + hold;
   const frames = { count: total, at: (f) => src.frame(Math.round(src.n * Math.min(1, (f + 1) / draw))) };
   const size = side + 'x' + side;
   if (gif) {
-    const buf = await ffmpeg(['-s', size, '-r', String(fps), '-i', '-', '-vf', 'split[a][b];[a]palettegen=stats_mode=diff[p];[b][p]paletteuse=dither=bayer:bayer_scale=5:diff_mode=rectangle', '-loop', '0'], frames, 'gif');
+    const buf = await ffmpeg(['-s', size, '-r', String(fps), '-i', '-', '-vf', 'split[a][b];[a]palettegen=stats_mode=diff[p];[b][p]paletteuse=dither=bayer:bayer_scale=5:diff_mode=rectangle', '-loop', '0'], frames, 'gif', o);
     return { type: 'image/gif', buf };
   }
-  const buf = await ffmpeg(['-s', size, '-r', String(fps), '-i', '-', '-c:v', 'libx264', '-preset', 'medium', '-crf', '17', '-pix_fmt', 'yuv420p', '-movflags', '+faststart'], frames, 'mp4');
+  const buf = await ffmpeg(['-s', size, '-r', String(fps), '-i', '-', '-c:v', 'libx264', '-preset', 'medium', '-crf', '17', '-pix_fmt', 'yuv420p', '-movflags', '+faststart'], frames, 'mp4', o);
   return { type: 'video/mp4', buf };
+}
+
+/* ---------------------------------------------------------------- print: PDF and plotter SVG */
+// Vector output on a real page, in millimetres. The design is scaled to fit inside the margin and centred.
+const PAGES = { a4: [210, 297], a3: [297, 420], a2: [420, 594], letter: [215.9, 279.4] };
+function layout(body, o) {
+  const { vw, vh, layers, cur } = models(body), all = layers.concat([cur]), R = region(bounds(all), vw, vh);
+  const [a, b] = PAGES[o.page] || PAGES.a4, land = R.w > R.h, pw = land ? b : a, ph = land ? a : b, mg = num(o.margin, 0, 50, 10);
+  const s = Math.min((pw - 2 * mg) / R.w, (ph - 2 * mg) / R.h), ox = (pw - R.w * s) / 2 - R.x0 * s, oy = (ph - R.h * s) / 2 - R.y0 * s;
+  return { all, pw, ph, s, tx: (x) => x * s + ox, ty: (y) => y * s + oy };
+}
+// Samples i..e as moves and lines; points closer than minStep to the last are dropped.
+function pathData(m, i, e, tx, ty, minStep, emit) {
+  let lx = tx(m.xs[i]), ly = ty(m.ys[i]);
+  emit(true, lx, ly);
+  for (let j = i + 1; j <= e; j++) {
+    const x = tx(m.xs[j]), y = ty(m.ys[j]), pen = m.up && m.up[j];
+    if (!pen && j < e && (x - lx) * (x - lx) + (y - ly) * (y - ly) < minStep * minStep) continue;
+    emit(!!pen, x, y);
+    lx = x; ly = y;
+  }
+}
+const hexRGB = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
+// Plain RGB -> CMYK (no colour profile): what a print shop needs to see in the file, not a colour-managed conversion.
+function cmykOf([r, g, b]) {
+  r /= 255; g /= 255; b /= 255;
+  const k = 1 - Math.max(r, g, b);
+  return k >= 1 ? [0, 0, 0, 1] : [(1 - r - k) / (1 - k), (1 - g - k) / (1 - k), (1 - b - k) / (1 - k), k];
+}
+function pdfFile(wPt, hPt, content, alpha) {
+  const o = ['<< /Type /Catalog /Pages 2 0 R >>', '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ' + wPt.toFixed(2) + ' ' + hPt.toFixed(2) + '] /Contents 4 0 R /Resources << /ExtGState << /G0 << /CA ' + alpha + ' /ca ' + alpha + ' >> >> >> >>',
+    '<< /Length ' + Buffer.byteLength(content) + ' >>\nstream\n' + content + '\nendstream'];
+  let s = '%PDF-1.4\n'; const xs = [];
+  o.forEach((b, i) => { xs.push(s.length); s += (i + 1) + ' 0 obj\n' + b + '\nendobj\n'; });          // ASCII only: length = bytes
+  const x0 = s.length;
+  s += 'xref\n0 ' + (o.length + 1) + '\n0000000000 65535 f \n' + xs.map((n) => String(n).padStart(10, '0') + ' 00000 n \n').join('') +
+    'trailer\n<< /Size ' + (o.length + 1) + ' /Root 1 0 R >>\nstartxref\n' + x0 + '\n%%EOF\n';
+  return Buffer.from(s, 'latin1');
+}
+function renderPrint(body, fmt, o = {}) {
+  const { all, pw, ph, s, tx, ty } = layout(body, o);
+  if (fmt === 'plotter') {                       // one path per layer (one pen per layer), thin black lines, no background
+    const out = all.map((m, n) => {
+      let d = '';
+      pathData(m, 0, m.N, tx, ty, 0.05, (mv, x, y) => { d += (mv ? 'M' : 'L') + x.toFixed(2) + ' ' + y.toFixed(2); });
+      return '<path id="layer-' + (n + 1) + '" d="' + d + '" stroke="rgb(' + (o.colors ? E.inkRGB(m.p, 0.5) : [0, 0, 0]).join(',') + ')"/>';
+    });
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="' + pw + 'mm" height="' + ph + 'mm" viewBox="0 0 ' + pw + ' ' + ph + '">' +
+      '<g fill="none" stroke-width="0.3" stroke-linecap="round" stroke-linejoin="round">' + out.join('') + '</g></svg>';
+    return { type: 'image/svg+xml', buf: Buffer.from(svg), ext: 'svg' };
+  }
+  const MM = 72 / 25.4, cm = !!o.cmyk, col = (c, stroke) => cm ? cmykOf(c).map((v) => v.toFixed(3)).join(' ') + (stroke ? ' K' : ' k') : c.map((v) => (v / 255).toFixed(3)).join(' ') + (stroke ? ' RG' : ' rg');
+  let c = '1 J 1 j\n/G0 gs\n';
+  if (body.bg && /^#[0-9a-f]{6}$/i.test(body.bg)) c += col(hexRGB(body.bg), false) + '\n0 0 ' + (pw * MM).toFixed(2) + ' ' + (ph * MM).toFixed(2) + ' re f\n';
+  for (const m of all) {
+    for (const [i, e, rgb] of chunks(m)) {
+      c += col(rgb, true) + '\n' + (m.p.weight * s * MM).toFixed(3) + ' w\n';
+      pathData(m, i, e, tx, ty, 0.05, (mv, x, y) => { c += (x * MM).toFixed(2) + ' ' + ((ph - y) * MM).toFixed(2) + (mv ? ' m\n' : ' l\n'); });
+      c += 'S\n';
+    }
+  }
+  return { type: 'application/pdf', buf: pdfFile(pw * MM, ph * MM, c, E.INK_ALPHA), ext: 'pdf' };
+}
+
+/* ---------------------------------------------------------------- any format, and zip */
+function renderAny(b, fmt, o = {}) {
+  if (fmt === 'gif' || fmt === 'mp4') return renderAnimation(b, fmt, o);
+  if (fmt === 'svg') return renderSVG(b);
+  if (fmt === 'pdf' || fmt === 'plotter') return renderPrint(b, fmt, o);
+  return renderStill(b, fmt, o.maxPx);
+}
+const EXT = { png: 'png', jpg: 'jpg', svg: 'svg', gif: 'gif', mp4: 'mp4', pdf: 'pdf', plotter: 'svg' };
+// A zip with the files stored, not compressed (PNG, JPEG and PDF gain little from it).
+function zipFiles(files) {
+  const parts = [], dir = [];
+  let off = 0;
+  for (const f of files) {
+    const nm = Buffer.from(f.name), crc = zlib.crc32(f.buf), h = Buffer.alloc(30), d = Buffer.alloc(46);
+    h.writeUInt32LE(0x04034b50, 0); h.writeUInt16LE(20, 4); h.writeUInt16LE(0x0800, 6); h.writeUInt16LE(0x21, 12);
+    h.writeUInt32LE(crc, 14); h.writeUInt32LE(f.buf.length, 18); h.writeUInt32LE(f.buf.length, 22); h.writeUInt16LE(nm.length, 26);
+    d.writeUInt32LE(0x02014b50, 0); d.writeUInt16LE(20, 4); d.writeUInt16LE(20, 6); d.writeUInt16LE(0x0800, 8); d.writeUInt16LE(0x21, 14);
+    d.writeUInt32LE(crc, 16); d.writeUInt32LE(f.buf.length, 20); d.writeUInt32LE(f.buf.length, 24); d.writeUInt16LE(nm.length, 28); d.writeUInt32LE(off, 42);
+    parts.push(h, nm, f.buf); dir.push(d, nm);
+    off += 30 + nm.length + f.buf.length;
+  }
+  const cd = Buffer.concat(dir), end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0); end.writeUInt16LE(files.length, 8); end.writeUInt16LE(files.length, 10); end.writeUInt32LE(cd.length, 12); end.writeUInt32LE(off, 16);
+  return Buffer.concat([...parts, cd, end]);
+}
+const safeName = (t) => String(t).replace(/[\\/:*?"<>|\x00-\x1f]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60) || 'Spirograph';
+
+/* ---------------------------------------------------------------- picture -> colour layers */
+// k-means on the picture's colours; each colour becomes a black-on-white mask picture of its own, traced as its own layer.
+async function splitPic(id, k) {
+  const held = pics.get(id);
+  if (!held) throw new HttpError(410, 'picture ' + id + ' is not on the server');
+  const { src } = held, W = src.width, H = src.height, px = src.getContext('2d').getImageData(0, 0, W, H).data;
+  const step = Math.max(1, Math.floor(Math.sqrt(W * H / 20000))), S = [];
+  for (let y = 0; y < H; y += step) for (let x = 0; x < W; x += step) { const i = 4 * (y * W + x); S.push(px[i], px[i + 1], px[i + 2]); }
+  const n = S.length / 3, C = [];
+  let mr = 0, mg = 0, mb = 0;
+  for (let i = 0; i < n; i++) { mr += S[3 * i]; mg += S[3 * i + 1]; mb += S[3 * i + 2]; }
+  C.push([mr / n, mg / n, mb / n]);
+  const dist = (i, c) => (S[3 * i] - c[0]) ** 2 + (S[3 * i + 1] - c[1]) ** 2 + (S[3 * i + 2] - c[2]) ** 2;
+  while (C.length < k) {                                     // farthest-point start: deterministic and spread out
+    let best = 0, bd = -1;
+    for (let i = 0; i < n; i++) { const d = Math.min(...C.map((c) => dist(i, c))); if (d > bd) { bd = d; best = i; } }
+    C.push([S[3 * best], S[3 * best + 1], S[3 * best + 2]]);
+  }
+  for (let it = 0; it < 10; it++) {
+    const sum = C.map(() => [0, 0, 0, 0]);
+    for (let i = 0; i < n; i++) {
+      let b = 0, bd = Infinity;
+      for (let c = 0; c < k; c++) { const d = dist(i, C[c]); if (d < bd) { bd = d; b = c; } }
+      const a = sum[b]; a[0] += S[3 * i]; a[1] += S[3 * i + 1]; a[2] += S[3 * i + 2]; a[3]++;
+    }
+    sum.forEach((a, c) => { if (a[3]) C[c] = [a[0] / a[3], a[1] / a[3], a[2] / a[3]]; });
+  }
+  const lab = new Uint8Array(W * H), count = new Array(k).fill(0), edge = new Array(k).fill(0);
+  for (let p = 0; p < W * H; p++) {
+    let b = 0, bd = Infinity;
+    for (let c = 0; c < k; c++) { const d = (px[4 * p] - C[c][0]) ** 2 + (px[4 * p + 1] - C[c][1]) ** 2 + (px[4 * p + 2] - C[c][2]) ** 2; if (d < bd) { bd = d; b = c; } }
+    lab[p] = b; count[b]++;
+    const x = p % W, y = (p / W) | 0;
+    if (x === 0 || y === 0 || x === W - 1 || y === H - 1) edge[b]++;
+  }
+  const border = 2 * (W + H) - 4, out = [];
+  for (let c = 0; c < k; c++) {
+    if (count[c] < W * H * 0.005 || edge[c] > 0.5 * border) continue;     // specks, and the background (it owns most of the border)
+    const cv = E.createCanvas(W, H), cx = cv.getContext('2d'), img = cx.createImageData(W, H);
+    for (let p = 0; p < W * H; p++) { const v = lab[p] === c ? 0 : 255; img.data[4 * p] = img.data[4 * p + 1] = img.data[4 * p + 2] = v; img.data[4 * p + 3] = 255; }
+    cx.putImageData(img, 0, 0);
+    out.push({ id: await storePic(cv.toBuffer('image/png')), color: '#' + C[c].map((v) => Math.round(v).toString(16).padStart(2, '0')).join(''), share: count[c] / (W * H) });
+  }
+  return out.sort((a, b) => b.share - a.share);
+}
+
+/* ---------------------------------------------------------------- saved designs */
+const DESIGN_ID = /^[0-9a-f]{8}$/, designFile = (id, ext) => path.join(DATA, 'designs', id + ext);
+// Settings as plain data again, but only the page's own keys, after cleanP has vetted them.
+function plainOf(raw) {
+  const q = cleanP(raw), o = {};
+  for (const k of Object.keys(E.DEFAULTS)) o[k] = q[k];
+  if (q.pic) o.pic = { id: raw.pic.id, thr: q.pic.thr, detail: q.pic.detail, match: q.pic.match, name: q.pic.name };
+  return o;
+}
+function listDesigns() {
+  return fs.readdirSync(path.join(DATA, 'designs')).filter((f) => f.endsWith('.json')).map((f) => {
+    try { const d = JSON.parse(fs.readFileSync(path.join(DATA, 'designs', f), 'utf8')); return { id: d.id, name: d.name, created: d.created }; } catch (_) { return null; }
+  }).filter(Boolean).sort((a, b) => b.created - a.created);
+}
+async function saveDesign(b) {
+  if (listDesigns().length >= 300) throw new HttpError(400, 'too many saved designs');
+  await needPics(b.P, ...(Array.isArray(b.layers) ? b.layers : []));
+  const d = { id: crypto.randomBytes(4).toString('hex'), name: safeName(b.name), created: Date.now(), vw: Math.round(num(b.vw, 200, 4000, 1280)), vh: Math.round(num(b.vh, 200, 4000, 800)),
+    bg: /^#[0-9a-f]{6}$/i.test(b.bg) ? b.bg : '', P: plainOf(b.P), layers: (Array.isArray(b.layers) ? b.layers : []).slice(0, 24).map(plainOf) };
+  const thumb = renderStill({ vw: d.vw, vh: d.vh, bg: '#282923', P: d.P, layers: d.layers }, 'jpg', 256);
+  fs.writeFileSync(designFile(d.id, '.jpg'), thumb.buf);
+  fs.writeFileSync(designFile(d.id, '.json'), JSON.stringify(d));
+  return d;
+}
+
+// Pictures nobody saved a design with are dropped after two weeks.
+(function prunePics() {
+  const used = new Set();
+  for (const f of fs.readdirSync(path.join(DATA, 'designs')).filter((x) => x.endsWith('.json'))) {
+    try { const d = JSON.parse(fs.readFileSync(path.join(DATA, 'designs', f), 'utf8')); for (const p of [d.P, ...d.layers]) if (p.pic) used.add(p.pic.id); } catch (_) { /* skip */ }
+  }
+  for (const f of fs.readdirSync(path.join(DATA, 'pics'))) {
+    const file = path.join(DATA, 'pics', f);
+    if (!used.has(f) && Date.now() - fs.statSync(file).mtimeMs > 14 * 864e5) fs.rmSync(file, { force: true });
+  }
+})();
+
+/* ---------------------------------------------------------------- background jobs */
+// Long renders and batches run one after another at low priority and are kept on disk; the page polls the list.
+const jobs = new Map();                       // id -> { id, kind, label, fmt, state, created, finished, bytes, ext, error }
+const JOB_ID = /^[0-9a-f]{10}$/, jobFile = (id, ext) => path.join(DATA, 'renders', id + ext);
+let jobChain = Promise.resolve();
+const saveJob = (j) => fs.writeFileSync(jobFile(j.id, '.json'), JSON.stringify(j));
+for (const f of fs.readdirSync(path.join(DATA, 'renders')).filter((x) => x.endsWith('.json'))) {
+  try {
+    const j = JSON.parse(fs.readFileSync(path.join(DATA, 'renders', f), 'utf8'));
+    if (j.state === 'queued' || j.state === 'running') { j.state = 'error'; j.error = 'server restarted'; saveJob(j); }
+    jobs.set(j.id, j);
+  } catch (_) { /* unreadable record: ignore */ }
+}
+function pruneJobs() {
+  const all = [...jobs.values()].sort((a, b) => b.created - a.created);
+  for (const j of all.slice(40).concat(all.filter((x) => Date.now() - x.created > 14 * 864e5))) {
+    if (j.state === 'queued' || j.state === 'running') continue;
+    jobs.delete(j.id);
+    for (const e of ['.json', '.' + j.ext]) fs.rm(jobFile(j.id, e), () => {});
+  }
+}
+async function notify(j) {
+  const link = PUBLIC_URL ? PUBLIC_URL + '/api/jobs/' + j.id + '/file' : '', ok = j.state === 'done';
+  const text = ok ? j.label + ' (' + j.ext.toUpperCase() + ', ' + (j.bytes / 1e6).toFixed(1) + ' MB) is ready' : j.label + ' failed: ' + j.error;
+  const tasks = [];
+  if (NTFY_URL) tasks.push(fetch(NTFY_URL, { method: 'POST', body: text, headers: Object.assign({ Title: 'Spirograph render ' + (ok ? 'done' : 'failed'), Tags: ok ? 'art' : 'warning' },
+    link && ok ? { Click: link } : {}, NTFY_TOKEN ? { Authorization: 'Bearer ' + NTFY_TOKEN } : {}) }));
+  if (HA_WEBHOOK_URL) tasks.push(fetch(HA_WEBHOOK_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id: j.id, state: j.state, kind: j.kind, fmt: j.fmt, label: j.label, bytes: j.bytes, url: link }) }));
+  for (const r of await Promise.allSettled(tasks)) if (r.status === 'rejected' || !r.value.ok) console.error('notify failed', r.reason || r.value.status);
+}
+function startJob(b) {
+  const kind = b.kind === 'batch' ? 'batch' : 'export', fmt = String(b.fmt);
+  if (!(fmt in EXT) || (kind === 'batch' && !['png', 'jpg', 'svg', 'pdf', 'plotter'].includes(fmt))) throw new HttpError(400, 'bad format');
+  const names = kind === 'batch' ? (Array.isArray(b.names) ? b.names : []).map((x) => String(x).trim()).filter(Boolean).slice(0, 100) : [];
+  if (kind === 'batch' && !names.length) throw new HttpError(400, 'no names');
+  const o = { long: true, size: b.size, fps: b.fps, seconds: b.seconds, page: String(b.page || 'a4'), margin: b.margin, cmyk: !!b.cmyk, colors: !!b.colors };
+  const j = { id: crypto.randomBytes(5).toString('hex'), kind, fmt, label: safeName(b.label || (kind === 'batch' ? 'Batch' : 'Spirograph')), state: 'queued', created: Date.now(), ext: kind === 'batch' ? 'zip' : EXT[fmt] };
+  jobs.set(j.id, j); saveJob(j);
+  jobChain = jobChain.then(async () => {
+    j.state = 'running'; saveJob(j);
+    try {
+      let buf;
+      if (kind === 'batch') {
+        const files = [];
+        for (const [n, name] of names.entries()) {
+          await needPics(b.P);
+          const sub = Object.assign({}, b, { P: Object.assign({}, b.P, { text: name, pic: undefined }), layers: [] });
+          const r = await renderAny(sub, fmt, Object.assign({}, o, { maxPx: 4096 }));
+          files.push({ name: String(n + 1).padStart(2, '0') + ' ' + safeName(name) + '.' + EXT[fmt], buf: r.buf });
+          await new Promise((r2) => setImmediate(r2));
+        }
+        buf = zipFiles(files);
+      } else {
+        await needPics(b.P, ...(Array.isArray(b.layers) ? b.layers : []));
+        buf = (await renderAny(b, fmt, o)).buf;
+      }
+      fs.writeFileSync(jobFile(j.id, '.' + j.ext), buf);
+      j.bytes = buf.length; j.state = 'done';
+    } catch (e) { console.error(e); j.state = 'error'; j.error = e instanceof HttpError ? e.message : String(e.message || e).slice(0, 200); }
+    j.finished = Date.now(); saveJob(j);
+    console.log('job', j.id, j.kind, j.fmt, j.state, Math.round((j.finished - j.created) / 1000) + 's');
+    notify(j).catch(() => {});
+    pruneJobs();
+  });
+  return j;
+}
+
+/* ---------------------------------------------------------------- picture from a URL */
+async function fetchPicture(u) {
+  let url;
+  try { url = new URL(u); } catch (_) { throw new HttpError(400, 'bad url'); }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') throw new HttpError(400, 'http(s) only');
+  const r = await fetch(url, { signal: AbortSignal.timeout(20e3), redirect: 'follow' }).catch((e) => { throw new HttpError(502, 'fetch failed: ' + (e.cause && e.cause.code || e.message)); });
+  if (!r.ok) throw new HttpError(502, 'fetch failed: HTTP ' + r.status);
+  if (+r.headers.get('content-length') > MAX_BODY) throw new HttpError(413, 'picture too large');
+  const bytes = Buffer.from(await r.arrayBuffer());
+  if (bytes.length > MAX_BODY) throw new HttpError(413, 'picture too large');
+  return { id: await storePic(bytes), name: decodeURIComponent(url.pathname.split('/').pop() || 'picture').replace(/\.[^.]*$/, '').slice(0, 60) };
 }
 
 /* ---------------------------------------------------------------- http */
@@ -266,29 +548,71 @@ const send = (res, code, data, type = 'text/plain', extra = {}) => { res.writeHe
 const json = (res, code, o) => send(res, code, JSON.stringify(o), 'application/json');
 
 async function api(req, res, url) {
-  if (req.method !== 'POST') throw new HttpError(405, 'POST only');
-  if (url.pathname === '/api/terms/name') {
-    const j = JSON.parse((await body(req, 20e3)).toString());
-    const lines = j.lines;
+  const p = url.pathname, M = req.method, jbody = async (lim) => JSON.parse((await body(req, lim)).toString() || '{}');
+  if (M === 'POST' && p === '/api/terms/name') {
+    const lines = (await jbody(20e3)).lines;
     if (!Array.isArray(lines) || !lines.length || lines.length > 8 || lines.some((l) => typeof l !== 'string' || !l.trim() || l.length > E.MAX_TEXT)) throw new HttpError(400, 'bad lines');
     const buf = await queue(() => nameTerms(lines));
     return buf.length ? send(res, 200, buf, 'application/octet-stream') : send(res, 204, '');
   }
-  if (url.pathname === '/api/terms/pic') {
+  if (M === 'POST' && p === '/api/terms/pic') {
     const bytes = await body(req);
     let id = url.searchParams.get('id') || '';
     if (bytes.length) id = await queue(() => storePic(bytes));
     const thr = Math.round(num(url.searchParams.get('thr'), 5, 95, 30)), detail = Math.round(num(url.searchParams.get('detail'), 96, 1536, 320));
-    const buf = await queue(() => picTerms(id, thr, detail));
+    const buf = await queue(async () => { await needPics({ pic: { id } }); return picTerms(id, thr, detail); });
     return buf.length ? send(res, 200, buf, 'application/octet-stream', { 'X-Pic-Id': id }) : send(res, 204, '', 'text/plain', { 'X-Pic-Id': id });
   }
-  if (url.pathname === '/api/export') {
-    const b = JSON.parse((await body(req, 2e6)).toString()), fmt = String(b.fmt);
-    if (!['png', 'jpg', 'svg', 'gif', 'mp4'].includes(fmt)) throw new HttpError(400, 'bad format');
+  if (M === 'POST' && p === '/api/pic/split') {
+    const id = url.searchParams.get('id') || '', k = Math.round(num(url.searchParams.get('k'), 2, 8, 4));
+    const out = await queue(async () => { await needPics({ pic: { id } }); return splitPic(id, k); });
+    return json(res, 200, out);
+  }
+  if (M === 'POST' && p === '/api/fetch') {
+    const j = await jbody(4e3), r = await queue(() => fetchPicture(String(j.url || '')));
+    return json(res, 200, r);
+  }
+  if (M === 'POST' && p === '/api/export') {
+    const b = await jbody(2e6), fmt = String(b.fmt);
+    if (!['png', 'jpg', 'svg', 'gif', 'mp4', 'pdf', 'plotter'].includes(fmt)) throw new HttpError(400, 'bad format');
     const t0 = Date.now();
-    const r = await queue(() => (fmt === 'gif' || fmt === 'mp4' ? renderAnimation(b, fmt) : fmt === 'svg' ? renderSVG(b) : renderStill(b, fmt)));
+    const r = await queue(async () => { await needPics(b.P, ...(Array.isArray(b.layers) ? b.layers : [])); return renderAny(b, fmt, b.opt || {}); });
     console.log('export', fmt, r.buf.length, 'bytes', Date.now() - t0, 'ms');
     return send(res, 200, r.buf, r.type);
+  }
+  if (p === '/api/designs') {
+    if (M === 'GET') return json(res, 200, listDesigns());
+    if (M === 'POST') { const d = await queue(async () => saveDesign(await jbody(2e6))); return json(res, 200, { id: d.id, name: d.name }); }
+  }
+  let m = /^\/api\/designs\/([0-9a-f]{8})(\/thumb)?$/.exec(p);
+  if (m) {
+    const f = designFile(m[1], m[2] ? '.jpg' : '.json');
+    if (M === 'GET') {
+      const data = await fs.promises.readFile(f).catch(() => { throw new HttpError(404, 'no such design'); });
+      return send(res, 200, data, m[2] ? 'image/jpeg' : 'application/json');
+    }
+    if (M === 'DELETE' && !m[2]) { for (const e of ['.json', '.jpg']) fs.rmSync(designFile(m[1], e), { force: true }); return json(res, 200, { ok: true }); }
+  }
+  if (p === '/api/jobs') {
+    if (M === 'GET') return json(res, 200, [...jobs.values()].sort((a, b) => b.created - a.created));
+    if (M === 'POST') return json(res, 200, startJob(await jbody(2e6)));
+  }
+  m = /^\/api\/jobs\/([0-9a-f]{10})(\/file)?$/.exec(p);
+  if (m && jobs.has(m[1])) {
+    const j = jobs.get(m[1]);
+    if (M === 'GET' && m[2]) {
+      if (j.state !== 'done') throw new HttpError(409, 'not finished');
+      const type = { mp4: 'video/mp4', gif: 'image/gif', png: 'image/png', jpg: 'image/jpeg', svg: 'image/svg+xml', pdf: 'application/pdf', zip: 'application/zip' }[j.ext];
+      const data = await fs.promises.readFile(jobFile(j.id, '.' + j.ext)).catch(() => { throw new HttpError(404, 'file is gone'); });
+      return send(res, 200, data, type, { 'Content-Disposition': "attachment; filename*=UTF-8''" + encodeURIComponent(j.label + ' - Spirograph.' + j.ext) });
+    }
+    if (M === 'GET') return json(res, 200, j);
+    if (M === 'DELETE') {
+      if (j.state === 'queued' || j.state === 'running') throw new HttpError(409, 'still running');
+      jobs.delete(j.id);
+      for (const e of ['.json', '.' + j.ext]) fs.rmSync(jobFile(j.id, e), { force: true });
+      return json(res, 200, { ok: true });
+    }
   }
   throw new HttpError(404, 'no such endpoint');
 }

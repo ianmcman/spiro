@@ -9,7 +9,7 @@ RUN cd server && npm ci --omit=dev
 COPY server/ ./server/
 COPY site/ ./site/
 
-ENV NODE_ENV=production PORT=8080 SITE_DIR=/app/site
+ENV NODE_ENV=production PORT=8080 SITE_DIR=/app/site DATA_DIR=/data
 USER node
 EXPOSE 8080
 

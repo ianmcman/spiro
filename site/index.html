@@ -91,6 +91,14 @@ body:not(.open) .panel { display: none; }
 .hidden { display: none !important; }
 .panel:not(.name-mode) .name-only, .panel.name-mode .spiro-only, .panel:not(.image-mode) .image-only, .panel.image-mode .name-only { display: none; }
 #mode { grid-template-columns: repeat(3, 1fr); }
+/* server mode (homelab build) lists */
+.sv-list { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+.sv-item { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 1.3rem; }
+.sv-item img { width: 40px; height: 40px; object-fit: cover; border-radius: 4px; background: #282923; flex: none; }
+.sv-item .sv-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sv-item .btn { min-height: 32px; padding: 0 10px; }
+.sv-item small { color: var(--text-sub); }
+textarea.text { padding: 8px 10px; min-height: 90px; resize: vertical; }
 #mode button { padding: 0 4px; font-size: 1.2rem; }
 .wide-btn { width: 100%; }
 .swatches { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 12px; }
@@ -310,6 +318,62 @@ body:not(.open) .fab { display: block; }
         </div>
       </section>
 
+      <section class="widget hidden" id="sv-saved" data-tab="export">
+        <h2 class="widget-header">Saved designs</h2>
+        <div class="card">
+          <div class="actions">
+            <label class="field wide"><span>Name</span><input type="text" class="text" id="sv-name" maxlength="60" autocomplete="off" placeholder="Name this design"></label>
+            <button type="button" class="btn wide" id="sv-save">Save to server</button>
+          </div>
+          <div class="sv-list" id="sv-designs"></div>
+          <p class="note">Keeps the pattern, kept layers and picture on the server. Opens from a short link (Copy link on a saved design).</p>
+        </div>
+      </section>
+
+      <section class="widget hidden" id="sv-render" data-tab="export">
+        <h2 class="widget-header">Background render</h2>
+        <div class="card">
+          <div class="actions">
+            <label class="field wide"><span>Format</span><select id="sv-fmt">
+              <option value="mp4:2160:60">MP4 4K, 60 fps</option><option value="mp4:1440:60">MP4 1440p, 60 fps</option><option value="mp4:1080:60">MP4 1080p, 60 fps</option>
+              <option value="pdf">PDF, print page</option><option value="plotter">SVG for a pen plotter</option></select></label>
+            <label class="field wide sv-vid"><span>Video length (seconds)</span><input type="text" class="text" id="sv-secs" inputmode="numeric" value="20"></label>
+            <label class="field sv-page hidden"><span>Page</span><select id="sv-page"><option value="a4">A4</option><option value="a3">A3</option><option value="a2">A2</option><option value="letter">Letter</option></select></label>
+            <label class="field sv-page hidden"><span>Margin (mm)</span><input type="text" class="text" id="sv-margin" inputmode="decimal" value="10"></label>
+            <label class="check sv-pdf hidden"><input type="checkbox" id="sv-cmyk"><span>CMYK colours</span></label>
+            <label class="check sv-plot hidden"><input type="checkbox" id="sv-pens"><span>Keep layer colours</span></label>
+            <button type="button" class="btn primary wide" id="sv-queue">Queue render</button>
+          </div>
+          <div class="sv-list" id="sv-jobs"></div>
+          <p class="note">Renders run on the server one after another and wait here when done; closing the page is fine. PDF uses the page as set, with the Look tab's background; CMYK is a plain conversion without a colour profile.</p>
+        </div>
+      </section>
+
+      <section class="widget hidden" id="sv-batch" data-tab="export">
+        <h2 class="widget-header">Batch of names</h2>
+        <div class="card">
+          <label class="field"><span>One name per line (up to 100)</span><textarea class="text" id="sv-names" spellcheck="false"></textarea></label>
+          <div class="actions" style="margin-top:8px">
+            <label class="field"><span>Format</span><select id="sv-bfmt"><option value="png">PNG</option><option value="jpg">JPG</option><option value="svg">SVG</option><option value="pdf">PDF (A4)</option><option value="plotter">Plotter SVG (A4)</option></select></label>
+            <button type="button" class="btn primary" id="sv-bqueue">Queue batch</button>
+          </div>
+          <p class="note">Each name is drawn with the current Look settings and downloaded together as a zip. Also available as <code>POST api/jobs</code>.</p>
+        </div>
+      </section>
+
+      <section class="widget hidden" id="sv-pic" data-tab="export">
+        <h2 class="widget-header">Picture tools</h2>
+        <div class="card">
+          <label class="field"><span>Picture from a web address</span><input type="text" class="text" id="sv-url" placeholder="http://..." autocomplete="off" spellcheck="false"></label>
+          <div class="actions" style="margin-top:8px">
+            <button type="button" class="btn wide" id="sv-fetch">Fetch and trace</button>
+            <label class="field"><span>Colours</span><input type="text" class="text" id="sv-k" inputmode="numeric" value="4"></label>
+            <button type="button" class="btn" id="sv-split">Split into colours</button>
+          </div>
+          <p class="note">The server downloads the address itself, so it can reach other homelab services. Split keeps the current picture's colours as separate layers, one outline each (the background colour is dropped).</p>
+        </div>
+      </section>
+
       <section class="widget name-only" data-tab="design">
         <h2 class="widget-header">Name</h2>
         <div class="card" id="name-card">
@@ -328,7 +392,7 @@ body:not(.open) .fab { display: block; }
           <label class="row"><span class="lab">Edge threshold</span><output class="num" id="o-picThr"></output><input type="range" id="picThr" min="5" max="95" step="1" value="30"></label>
           <label class="row"><span class="lab">Detail</span><output class="num" id="o-picDetail"></output><input type="range" id="picDetail" min="96" max="768" step="16" value="320"></label>
           <label class="check"><input type="checkbox" id="picMatch" checked><span>Match image colours</span></label>
-          <p class="note">The image's edges are traced as one line, then drawn by rotating circles. Works best on logos, silhouettes and clear outlines. The image stays in your browser.</p>
+          <p class="note" id="pic-note">The image's edges are traced as one line, then drawn by rotating circles. Works best on logos, silhouettes and clear outlines. The image stays in your browser.</p>
         </div>
       </section>
 
@@ -1439,6 +1503,126 @@ async function remoteExport(fmt, btn) {
 }
 async function remoteSave(fmt, btn) { const r = await remoteExport(fmt, btn); if (r) download(r.blob, fmt, r.label); }
 
+/* The homelab extras: saved designs, background renders, batches, picture tools. */
+const svApi = async (path, opt) => {
+  const r = await fetch('api/' + path, opt);
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'HTTP ' + r.status);
+  return r;
+};
+const svPost = (path, o) => svApi(path, { method: 'POST', body: JSON.stringify(o) });
+const svEsc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const svDesign = () => ({ vw, vh, bg: $('bg').value, P: plainP(P), layers: layers.map((l) => plainP(l.p)) });
+// Wait for terms, so every picture is on the server, then run fn.
+async function svReady() {
+  for (let i = 0; i < 100 && !remoteReady(); i++) await new Promise((r) => setTimeout(r, 100));
+}
+async function svBusy(btn, fn) {
+  const was = btn.textContent; btn.disabled = true; btn.textContent = '…';
+  try { await fn(); } catch (e) { alert(e.message || e); } finally { btn.disabled = false; btn.textContent = was; }
+}
+async function svRefreshDesigns() {
+  const list = await (await svApi('designs')).json();
+  $('sv-designs').innerHTML = list.map((d) => '<div class="sv-item" data-id="' + d.id + '"><img src="api/designs/' + d.id + '/thumb" alt="" loading="lazy"><span class="sv-name">' + svEsc(d.name) + '<br><small>' +
+    new Date(d.created).toLocaleDateString() + '</small></span><button type="button" class="btn" data-act="open">Open</button><button type="button" class="btn" data-act="link">Link</button><button type="button" class="btn" data-act="del">×</button></div>').join('');
+}
+// Replace the whole design with a saved one.
+async function svLoadDesign(id) {
+  const d = await (await svApi('designs/' + id)).json();
+  const mk = (o) => {
+    const p = Object.assign({}, DEFAULTS, o);
+    if (o.pic) p.pic = { file: null, id: o.pic.id, name: o.pic.name, thr: o.pic.thr, detail: o.pic.detail, match: o.pic.match, key: '', T: null, job: '' };
+    return p;
+  };
+  const p = mk(d.P);
+  if (!p.pic) P.pic = null;
+  Object.assign(P, p);
+  layers = d.layers.map((l) => ({ p: mk(l) }));
+  if (d.bg !== undefined) $('bg').value = d.bg;
+  setMode(P.pic ? 'image' : P.text ? 'name' : 'spiro');
+  syncUI(); geometryChanged(true); layersStale = true; needRebuild = true;
+  paused = false;
+}
+async function svRefreshJobs() {
+  const list = await (await svApi('jobs')).json();
+  $('sv-jobs').innerHTML = list.map((j) => '<div class="sv-item" data-id="' + j.id + '"><span class="sv-name">' + svEsc(j.label) + '<br><small>' + j.fmt.toUpperCase() + ' · ' +
+    (j.state === 'done' ? (j.bytes / 1e6).toFixed(1) + ' MB' : j.state === 'error' ? 'failed: ' + svEsc(j.error || '') : j.state) + '</small></span>' +
+    (j.state === 'done' ? '<a class="btn" href="api/jobs/' + j.id + '/file" download>Download</a>' : '') +
+    (j.state === 'done' || j.state === 'error' ? '<button type="button" class="btn" data-act="del">×</button>' : '') + '</div>').join('');
+  clearTimeout(svTimer);
+  if (list.some((j) => j.state === 'queued' || j.state === 'running')) svTimer = setTimeout(() => svRefreshJobs().catch(() => {}), 3000);
+}
+let svTimer = 0;
+function initServerUI() {
+  for (const id of ['sv-saved', 'sv-render', 'sv-batch', 'sv-pic']) $(id).classList.remove('hidden');
+  const fmtUI = () => {
+    const f = $('sv-fmt').value, pdf = f === 'pdf', plot = f === 'plotter';
+    document.querySelectorAll('.sv-vid').forEach((e) => e.classList.toggle('hidden', pdf || plot));
+    document.querySelectorAll('.sv-page').forEach((e) => e.classList.toggle('hidden', !(pdf || plot)));
+    document.querySelectorAll('.sv-pdf').forEach((e) => e.classList.toggle('hidden', !pdf));
+    document.querySelectorAll('.sv-plot').forEach((e) => e.classList.toggle('hidden', !plot));
+  };
+  $('sv-fmt').addEventListener('change', fmtUI); fmtUI();
+  $('sv-save').addEventListener('click', () => svBusy($('sv-save'), async () => {
+    if (!model) return;
+    await svReady();
+    const r = await (await svPost('designs', Object.assign(svDesign(), { name: $('sv-name').value.trim() || fileLabel().replace(/ - Spirograph$/, '') }))).json();
+    $('sv-name').value = '';
+    await svRefreshDesigns();
+    history.replaceState(null, '', '?d=' + r.id);
+  }));
+  $('sv-designs').addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-act]'), row = e.target.closest('.sv-item');
+    if (!b) return;
+    const id = row.dataset.id;
+    if (b.dataset.act === 'open') svBusy(b, () => svLoadDesign(id).then(() => history.replaceState(null, '', '?d=' + id)));
+    if (b.dataset.act === 'link') navigator.clipboard.writeText(location.origin + location.pathname + '?d=' + id).then(() => { b.textContent = 'Copied'; setTimeout(() => { b.textContent = 'Link'; }, 1200); });
+    if (b.dataset.act === 'del' && confirm('Delete this saved design?')) svBusy(b, async () => { await svApi('designs/' + id, { method: 'DELETE' }); await svRefreshDesigns(); });
+  });
+  $('sv-queue').addEventListener('click', () => svBusy($('sv-queue'), async () => {
+    if (!model) return;
+    await svReady();
+    const [fmt, size, fps] = $('sv-fmt').value.split(':');
+    await svPost('jobs', Object.assign(svDesign(), { kind: 'export', fmt, size: +size, fps: +fps, seconds: parseFloat($('sv-secs').value) || 20, page: $('sv-page').value,
+      margin: parseFloat($('sv-margin').value), cmyk: $('sv-cmyk').checked, colors: $('sv-pens').checked, label: fileLabel().replace(/ - Spirograph$/, '') }));
+    await svRefreshJobs();
+  }));
+  $('sv-bqueue').addEventListener('click', () => svBusy($('sv-bqueue'), async () => {
+    const names = $('sv-names').value.split('\n').map((t) => t.trim()).filter(Boolean);
+    if (!names.length) { alert('Type some names first, one per line.'); return; }
+    const d = svDesign();
+    delete d.P.pic;
+    await svPost('jobs', Object.assign(d, { kind: 'batch', fmt: $('sv-bfmt').value, names, label: 'Batch of ' + names.length }));
+    await svRefreshJobs();
+  }));
+  $('sv-jobs').addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-act="del"]');
+    if (b) svBusy(b, async () => { await svApi('jobs/' + b.closest('.sv-item').dataset.id, { method: 'DELETE' }); await svRefreshJobs(); });
+  });
+  $('sv-fetch').addEventListener('click', () => svBusy($('sv-fetch'), async () => {
+    const r = await (await svPost('fetch', { url: $('sv-url').value.trim() })).json();
+    if (P.text) { lastText = P.text; P.text = ''; }
+    P.pic = { file: null, id: r.id, name: r.name, thr: parseFloat($('picThr').value), detail: parseFloat($('picDetail').value), match: $('picMatch').checked, key: '', T: null, job: '' };
+    setMode('image'); syncUI(); geometryChanged(true);
+    paused = false;
+  }));
+  $('sv-split').addEventListener('click', () => svBusy($('sv-split'), async () => {
+    if (!P.pic) { alert('Open a picture first (Image mode).'); return; }
+    await svReady();
+    const parts = await (await svPost('pic/split?id=' + P.pic.id + '&k=' + Math.min(8, Math.max(2, parseInt($('sv-k').value, 10) || 4)), {})).json();
+    if (!parts.length) { alert('Nothing left to trace after dropping the background.'); return; }
+    const base = P.pic;
+    layers = layers.concat(parts.slice(0, MAX_LAYERS - layers.length).map((c) => ({ p: Object.assign({}, DEFAULTS, { ink: 'custom', color: c.color,
+      pic: { file: null, id: c.id, name: base.name, thr: base.thr, detail: base.detail, match: false, key: '', T: null, job: '' } }) })));
+    P.pic = null; setMode('spiro');
+    layersStale = true;
+    syncUI(); geometryChanged(true);
+  }));
+  svRefreshDesigns().catch(() => {});
+  svRefreshJobs().catch(() => {});
+  const d = new URLSearchParams(location.search).get('d');
+  if (d) svLoadDesign(d).catch((e) => alert('That saved design could not be opened (' + e.message + ').'));
+}
+
 function tick() {
   raf = 0;
   if (!vw) return;
@@ -2098,7 +2282,9 @@ function init() {
   if (REMOTE) {
     $('rec-note').textContent = 'Exports are rendered on the homelab server: PNG up to 8192 px, SVG, JPG, a 1080p MP4 and a 480 px GIF of the whole drawing. Names and pictures are traced there too.';
     $('picDetail').max = 1536;
+    $('pic-note').textContent = 'The image\'s edges are traced as one line, then drawn by rotating circles. Works best on logos, silhouettes and clear outlines. The image is sent to your server and kept there.';
     document.title += ' (homelab)';
+    initServerUI();
   }
   $('gif').addEventListener('click', saveGIF);
   $('save').addEventListener('click', savePNG);

@@ -10,6 +10,14 @@ services:
     ports:
       - "${LAB_PORT:-8099}:8080"
     restart: unless-stopped
+    environment:
+      # Optional: a push when a background render finishes (ntfy), and/or a JSON POST (Home Assistant webhook).
+      PUBLIC_URL: ${LAB_PUBLIC_URL:-}
+      NTFY_URL: ${LAB_NTFY_URL:-}
+      NTFY_TOKEN: ${LAB_NTFY_TOKEN:-}
+      HA_WEBHOOK_URL: ${LAB_HA_WEBHOOK_URL:-}
+    volumes:
+      - ${LAB_DATA:-../data}:/data        # saved designs, pictures and finished renders; must be writable by uid 1000
     read_only: true
     tmpfs:
       - /tmp:size=1g,mode=1777

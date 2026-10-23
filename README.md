@@ -137,6 +137,16 @@ cd server
 docker compose up -d --build     # http://HOST:8099/ ; LAB_PORT in .env changes the port
 ```
 
+Beyond the exports, the server adds:
+
+- **Saved designs:** the pattern, kept layers and picture are stored under `data/` and open from a short link (`/?d=ID`).
+- **Background renders:** MP4 up to 4K at 60 fps, a PDF on an A4/A3/A2/Letter page (optional plain CMYK) and a plotter SVG in millimetres with one path per layer. They queue at low priority, wait in the panel, and can push a notification (ntfy and/or a webhook).
+- **Batch of names:** a list of names becomes a zip of PNG, JPG, SVG, PDF or plotter SVG files.
+- **Picture tools:** fetch a picture from a web address (the server makes the request) and split a picture into 2 to 8 colour layers, one traced outline each.
+- **API:** everything above is plain HTTP. `POST api/export`, `api/jobs` (`kind: "batch"` for names), `api/designs`, `api/fetch`, `api/pic/split`; `GET api/jobs` lists jobs and `api/jobs/ID/file` downloads one.
+
+Set `LAB_PUBLIC_URL`, `LAB_NTFY_URL`, `LAB_NTFY_TOKEN`, `LAB_HA_WEBHOOK_URL` and `LAB_DATA` in `server/.env` to change where notifications go and where data lives (`../data` by default, writable by uid 1000).
+
 The image is Node 22 on Debian with ffmpeg. Exports run one at a time. `cd server && npm install && node test.js` prints checksums of a few models for comparing the engine against the browser.
 
 ## Run on the homelab
