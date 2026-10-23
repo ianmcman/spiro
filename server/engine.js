@@ -22,4 +22,5 @@ const make = new Function(...Object.keys(stubs), body + '\nreturn {' + exported.
 // Default settings: the page's own state literal, so the server can't disagree with it about names or ranges.
 const lit = html.slice(html.indexOf('const P = {'), html.indexOf('};', html.indexOf('const P = {')) + 2);
 const DEFAULTS = new Function(lit + '\nreturn P;')();
-module.exports = Object.assign(make(...Object.values(stubs)), { createCanvas, Path2D, DEFAULTS });
+const list = (n) => new Function('return ' + html.match(new RegExp('const ' + n + ' = (\\[[^\\]]*\\])'))[1])();   // the page's tooth-count lists
+module.exports = Object.assign(make(...Object.values(stubs)), { createCanvas, Path2D, DEFAULTS, RING_TEETH: list('RING_TEETH'), WHEEL_TEETH: list('WHEEL_TEETH') });

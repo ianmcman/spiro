@@ -10,6 +10,8 @@ const crypto = require('crypto');
 const zlib = require('zlib');
 const { spawn } = require('child_process');
 const E = require('./engine');
+const Face = require('./face');
+const nodemailer = require('nodemailer');
 const { loadImage } = require('@napi-rs/canvas');
 
 const SITE = process.env.SITE_DIR || path.join(__dirname, '..', 'site');
@@ -17,6 +19,8 @@ const PORT = +process.env.PORT || 8080;
 const MAX_BODY = 30e6;
 const DATA = process.env.DATA_DIR || path.join(__dirname, '..', 'data');          // saved designs, pictures, finished renders
 const PUBLIC_URL = (process.env.PUBLIC_URL || '').replace(/\/$/, '');             // used in notification links
+const SMTP = { host: process.env.SMTP_HOST || '', port: +process.env.SMTP_PORT || 587, user: process.env.SMTP_USER || '', pass: process.env.SMTP_PASS || '' };
+const MAIL_FROM = process.env.MAIL_FROM || '', MAIL_TO = process.env.MAIL_TO || '', DAILY_AT = process.env.DAILY_AT || '';   // DAILY_AT: "07:00" in TZ
 const NTFY_URL = process.env.NTFY_URL || '', NTFY_TOKEN = process.env.NTFY_TOKEN || '', HA_WEBHOOK_URL = process.env.HA_WEBHOOK_URL || '';
 for (const d of ['pics', 'designs', 'renders']) fs.mkdirSync(path.join(DATA, d), { recursive: true });
 const TAU = Math.PI * 2;
@@ -52,21 +56,24 @@ function packTerms(T) {
 }
 
 /* ---------------------------------------------------------------- pictures */
-const pics = new Lru(24);           // id -> { src canvas }: the decoded picture, kept so sliders and exports don't re-upload it
+const pics = new Lru(10);           // id -> { src canvas }: the decoded picture, kept so sliders and exports don't re-upload it
 const picTermsCache = new Lru(16);  // id|thr|detail -> packed terms
 const PIC_ID = /^[0-9a-f]{12}$/, picFile = (id) => path.join(DATA, 'pics', id);
 // Every upload is also kept on disk, so saved designs and a restarted server still have their pictures.
 async function decodePic(id, bytes) {
   let img;
   try { img = await loadImage(bytes); } catch (_) { throw new HttpError(415, 'That file could not be read as an image'); }
-  const k = Math.min(1, 2048 / Math.max(img.width, img.height)), src = E.createCanvas(Math.max(1, Math.round(img.width * k)), Math.max(1, Math.round(img.height * k)));
+  const k = Math.min(1, 4096 / Math.max(img.width, img.height)), src = E.createCanvas(Math.max(1, Math.round(img.width * k)), Math.max(1, Math.round(img.height * k)));
   const c = src.getContext('2d');
   c.fillStyle = '#fff'; c.fillRect(0, 0, src.width, src.height);                // transparent areas read as white
   c.drawImage(img, 0, 0, src.width, src.height);
-  pics.set(id, { src });
+  pics.set(id, { src, lines: fs.existsSync(picFile(id) + '.lines') });   // .lines: a line drawing (face art), traced by its lines, not its edges
 }
-async function storePic(bytes) {
+async function storePic(bytes, lines = false) {
   const id = crypto.createHash('sha1').update(bytes).digest('hex').slice(0, 12);
+  if (lines) fs.writeFileSync(picFile(id) + '.lines', '');
+  const was = pics.get(id);
+  if (was && lines) was.lines = true;
   if (!pics.get(id)) await decodePic(id, bytes);
   if (!fs.existsSync(picFile(id))) fs.writeFileSync(picFile(id), bytes);
   return id;
@@ -83,8 +90,8 @@ async function needPics(...ps) {
 function picObject(m) {                // a client's picture description -> what the engine's picTerms expects
   const held = m && typeof m.id === 'string' && pics.get(m.id);
   if (!held) throw new HttpError(410, 'picture ' + (m && m.id) + ' is not on the server');
-  return { src: held.src, name: String(m.name || '').slice(0, 60), thr: num(m.thr, 5, 95, 30), detail: Math.round(num(m.detail, 96, 1536, 320)),
-    match: !!m.match, key: '', T: null };
+  return { src: held.src, name: String(m.name || '').slice(0, 60), thr: num(m.thr, 5, 95, 30), detail: Math.round(num(m.detail, 96, 4096, 320)),
+    match: !!m.match, lines: !!held.lines, key: '', T: null };
 }
 function picTerms(id, thr, detail) {
   const key = id + '|' + thr + '|' + detail;
@@ -454,6 +461,17 @@ async function cutoutPic(id, mode) {
   return { id: await storePic(cv.toBuffer('image/png')) };
 }
 
+// A line drawing of the faces in a picture (optionally with the subject's outline), as a new picture to trace.
+async function facePic(id, outline) {
+  const held = pics.get(id);
+  if (!held) throw new HttpError(410, 'picture ' + id + ' is not on the server');
+  let art;
+  try { art = await Face.faceArt(held.src, outline ? await subjectMask(held.src) : null); }
+  catch (e) { if (e instanceof HttpError) throw e; console.error(e); throw new HttpError(501, 'the face model is not installed on this server'); }
+  if (!art) throw new HttpError(422, 'no face found in that picture');
+  return { id: await storePic(art.cv.toBuffer('image/png'), true), faces: art.faces };
+}
+
 /* ---------------------------------------------------------------- saved designs */
 const DESIGN_ID = /^[0-9a-f]{8}$/, designFile = (id, ext) => path.join(DATA, 'designs', id + ext);
 // Settings as plain data again, but only the page's own keys, after cleanP has vetted them.
@@ -487,7 +505,7 @@ async function saveDesign(b) {
   }
   for (const f of fs.readdirSync(path.join(DATA, 'pics'))) {
     const file = path.join(DATA, 'pics', f);
-    if (!used.has(f) && Date.now() - fs.statSync(file).mtimeMs > 14 * 864e5) fs.rmSync(file, { force: true });
+    if (!used.has(f.replace('.lines', '')) && Date.now() - fs.statSync(file).mtimeMs > 14 * 864e5) fs.rmSync(file, { force: true });
   }
 })();
 
@@ -559,6 +577,60 @@ function startJob(b) {
   return j;
 }
 
+/* ---------------------------------------------------------------- pattern of the day, by email */
+// The same date always gives the same design: a seeded version of the page's Shuffle, one to three layers.
+function rng(seed) {
+  let a = seed >>> 0;
+  return () => { a = (a + 0x6D2B79F5) >>> 0; let t = a; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+}
+function dailyDesign(date) {
+  const R = rng([...date].reduce((h, c) => Math.imul(h ^ c.charCodeAt(0), 16777619), 2166136261)), pick = (a) => a[(R() * a.length) | 0], rnd = (a, b) => a + R() * (b - a);
+  const inks = Object.keys(E.INKS).filter((k) => k !== 'custom'), out = [];
+  for (let n = 1 + ((R() * 3) | 0); n--;) {
+    const q = Object.assign({}, E.DEFAULTS);
+    q.ringShape = pick(E.SHAPES); q.wheelShape = pick(E.SHAPES); q.side = R() < 0.5 ? 'inside' : 'outside';
+    const wf = rnd(0.12, q.side === 'inside' ? 0.7 : 0.55);
+    q.wheel = Math.round(wf * 100); q.ringTeeth = pick(E.RING_TEETH); q.wheelTeeth = pick(E.WHEEL_TEETH);
+    q.pen = Math.round(rnd(30, 140)); q.angle = Math.round(rnd(0, 360));
+    let ring = rnd(40, 85);
+    if (q.side === 'outside') ring = Math.min(ring, 96 / (1 + wf * (1 + Math.max(q.pen / 100, 1))));
+    q.ring = Math.max(20, Math.round(ring));
+    if (R() < 0.2) { q.second = true; q.wheelShape = 'circle'; q.w2side = pick(['inside', 'outside']); q.w2div = 2 + ((R() * 7) | 0); q.w2speed = 1 + ((R() * 5) | 0); q.pen = Math.min(q.pen, 110); }
+    q.ink = out.length ? pick(inks) : R() < 0.5 ? 'cycle' : pick(inks); q.hue = Math.round(rnd(0, 360)); q.weight = Math.round(rnd(0.8, 2.2) * 10) / 10;
+    out.push(q);
+  }
+  return { vw: 1000, vh: 1000, bg: '#282923', P: out.pop(), layers: out };
+}
+const dayState = path.join(DATA, 'daily.json');
+const today = (tz) => new Intl.DateTimeFormat('en-CA', { timeZone: tz || undefined }).format(new Date());            // 2026-10-24
+const nowHM = (tz) => new Intl.DateTimeFormat('en-GB', { timeZone: tz || undefined, hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date());
+async function sendDaily(date, send = true) {
+  const d = dailyDesign(date), design = await queue(async () => saveDesign(Object.assign({ name: 'Pattern of the day ' + date }, d)));
+  const png = await queue(async () => renderStill(Object.assign({}, d), 'png', 1800)).then((r) => r.buf);
+  const link = (PUBLIC_URL || '') + '/?d=' + design.id, name = 'Spirograph of the day ' + date;
+  if (send) {
+    if (!SMTP.host || !MAIL_TO) throw new HttpError(501, 'email is not configured on this server');
+    const t = nodemailer.createTransport({ host: SMTP.host, port: SMTP.port, secure: SMTP.port === 465, auth: SMTP.user ? { user: SMTP.user, pass: SMTP.pass } : undefined });
+    await t.sendMail({ from: MAIL_FROM || MAIL_TO, to: MAIL_TO, subject: name,
+      text: name + '\n\nOpen it in the lab (home network or VPN): ' + link + '\n',
+      html: '<p><img src="cid:pattern" alt="' + name + '" style="max-width:100%;border-radius:6px"></p><p><a href="' + link + '">Open it in the lab</a> (home network or VPN).</p>',
+      attachments: [{ filename: name + '.png', content: png, cid: 'pattern' }] });
+  }
+  return { date, id: design.id, link, bytes: png.length, sent: send };
+}
+// Once a day at DAILY_AT (TZ), and again after a restart only if that day's mail has not gone out.
+function dailyTimer() {
+  if (!DAILY_AT) return;
+  const tz = process.env.TZ || '';
+  setInterval(async () => {
+    const date = today(tz);
+    let last = ''; try { last = JSON.parse(fs.readFileSync(dayState, 'utf8')).last; } catch (_) { /* first run */ }
+    if (last === date || nowHM(tz) < DAILY_AT) return;
+    fs.writeFileSync(dayState, JSON.stringify({ last: date }));          // before sending: a failure is retried tomorrow, not every 30 s
+    try { console.log('daily', JSON.stringify(await sendDaily(date))); } catch (e) { console.error('daily failed', e); notify({ label: 'Pattern of the day', state: 'error', error: String(e.message || e).slice(0, 150), id: '', kind: 'daily', fmt: 'png', ext: 'png', bytes: 0 }).catch(() => {}); }
+  }, 30e3).unref();
+}
+
 /* ---------------------------------------------------------------- picture from a URL */
 async function fetchPicture(u) {
   let url;
@@ -604,7 +676,7 @@ async function api(req, res, url) {
     const bytes = await body(req);
     let id = url.searchParams.get('id') || '';
     if (bytes.length) id = await queue(() => storePic(bytes));
-    const thr = Math.round(num(url.searchParams.get('thr'), 5, 95, 30)), detail = Math.round(num(url.searchParams.get('detail'), 96, 1536, 320));
+    const thr = Math.round(num(url.searchParams.get('thr'), 5, 95, 30)), detail = Math.round(num(url.searchParams.get('detail'), 96, 4096, 320));
     const buf = await queue(async () => { await needPics({ pic: { id } }); return picTerms(id, thr, detail); });
     return buf.length ? send(res, 200, buf, 'application/octet-stream', { 'X-Pic-Id': id }) : send(res, 204, '', 'text/plain', { 'X-Pic-Id': id });
   }
@@ -616,6 +688,15 @@ async function api(req, res, url) {
   if (M === 'POST' && p === '/api/pic/cutout') {
     const id = url.searchParams.get('id') || '', mode = url.searchParams.get('mode') === 'silhouette' ? 'silhouette' : 'cutout';
     return json(res, 200, await queue(async () => { await needPics({ pic: { id } }); return cutoutPic(id, mode); }));
+  }
+  if (M === 'POST' && p === '/api/pic/face') {
+    const id = url.searchParams.get('id') || '', outline = url.searchParams.get('outline') === '1';
+    return json(res, 200, await queue(async () => { await needPics({ pic: { id } }); return facePic(id, outline); }));
+  }
+  if (M === 'POST' && p === '/api/daily/run') {                       // ?date=YYYY-MM-DD, ?send=0 for a preview without email
+    const date = url.searchParams.get('date') || today(process.env.TZ || '');
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new HttpError(400, 'bad date');
+    return json(res, 200, await sendDaily(date, url.searchParams.get('send') !== '0'));
   }
   if (M === 'POST' && p === '/api/fetch') {
     const j = await jbody(4e3), r = await queue(() => fetchPicture(String(j.url || '')));
@@ -684,5 +765,5 @@ const server = http.createServer(async (req, res) => {
     if (!res.headersSent) json(res, e instanceof HttpError ? e.code : e instanceof SyntaxError ? 400 : 500, { error: e instanceof HttpError || e instanceof SyntaxError ? e.message : 'server error' });
   }
 });
-if (require.main === module) server.listen(PORT, () => console.log('spirograph server on :' + PORT));
+if (require.main === module) server.listen(PORT, () => { console.log('spirograph server on :' + PORT); dailyTimer(); });
 module.exports = { server, packTerms, cleanP };
