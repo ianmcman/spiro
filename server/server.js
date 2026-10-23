@@ -65,9 +65,14 @@ async function decodePic(id, bytes) {
   try { img = await loadImage(bytes); } catch (_) { throw new HttpError(415, 'That file could not be read as an image'); }
   const k = Math.min(1, 4096 / Math.max(img.width, img.height)), src = E.createCanvas(Math.max(1, Math.round(img.width * k)), Math.max(1, Math.round(img.height * k)));
   const c = src.getContext('2d');
-  c.fillStyle = '#fff'; c.fillRect(0, 0, src.width, src.height);                // transparent areas read as white
   c.drawImage(img, 0, 0, src.width, src.height);
-  pics.set(id, { src, lines: fs.existsSync(picFile(id) + '.lines') });   // .lines: a line drawing (face art), traced by its lines, not its edges
+  // a cut-out picture (transparent background): its alpha is the subject mask
+  const px = c.getImageData(0, 0, src.width, src.height).data, alpha = new Uint8Array(src.width * src.height);
+  let clear = 0;
+  for (let i = 0; i < alpha.length; i++) { alpha[i] = px[4 * i + 3] > 128 ? 1 : 0; if (!alpha[i]) clear++; }
+  c.globalCompositeOperation = 'destination-over';
+  c.fillStyle = '#fff'; c.fillRect(0, 0, src.width, src.height);                // transparent areas read as white
+  pics.set(id, { alpha: clear > alpha.length * 0.02 ? alpha : null, src, lines: fs.existsSync(picFile(id) + '.lines') });   // .lines: a line drawing (face art), traced by its lines, not its edges
 }
 async function storePic(bytes, lines = false) {
   const id = crypto.createHash('sha1').update(bytes).digest('hex').slice(0, 12);
@@ -466,7 +471,7 @@ async function facePic(id, outline, sketch) {
   const held = pics.get(id);
   if (!held) throw new HttpError(410, 'picture ' + id + ' is not on the server');
   let art;
-  try { art = await Face.faceArt(held.src, outline ? await subjectMask(held.src) : null, sketch); }
+  try { art = await Face.faceArt(held.src, outline ? held.alpha || await subjectMask(held.src) : null, sketch); }
   catch (e) { if (e instanceof HttpError) throw e; console.error(e); throw new HttpError(501, 'the face model is not installed on this server'); }
   if (!art) throw new HttpError(422, 'no face found in that picture');
   return { id: await storePic(art.cv.toBuffer('image/png'), true), faces: art.faces };

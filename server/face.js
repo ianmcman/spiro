@@ -68,6 +68,17 @@ function hull(pts) {                                              // convex hull
   for (const q of p.slice().reverse()) { while (up.length > 1 && cr(up[up.length - 2], up[up.length - 1], q) <= 0) up.pop(); up.push(q); }
   return lo.slice(0, -1).concat(up.slice(0, -1));
 }
+// Points binned along x: per bin the middle, topmost or bottommost point; the end bins are the extreme points.
+function bins(pts, n, how) {
+  const xs = pts.map((p) => p[0]), lo = Math.min(...xs), hi = Math.max(...xs), out = [];
+  for (let i = 0; i < n; i++) {
+    const a = lo + (hi - lo) * i / n, b = lo + (hi - lo) * (i + 1) / n, g = pts.filter((p) => p[0] >= a && (p[0] < b || i === n - 1));
+    if (!g.length) continue;
+    const x = g.reduce((s, p) => s + p[0], 0) / g.length, ys = g.map((p) => p[1]);
+    out.push([x, how === 'min' ? Math.min(...ys) : how === 'max' ? Math.max(...ys) : ys.reduce((s, v) => s + v, 0) / ys.length]);
+  }
+  return out;
+}
 // A smooth curve through the points (quadratics between midpoints).
 function curve(c, pts, closed) {
   if (pts.length < 2) return;
@@ -84,7 +95,9 @@ function curve(c, pts, closed) {
   }
   c.stroke();
 }
-// Black lines on white, cropped around the faces (long side 640). mask (optional): subject mask over src, drawn as an outline.
+// Black lines on white, cropped around the faces (long side 640). mask (optional): subject mask over src (1 = subject), drawn as an
+// outline. sketch: also keep the photo's strongest edges where there is detail worth keeping (hair, ears, glasses, around the eyes),
+// but not the smooth skin of the face, which stays clean.
 async function faceArt(src, mask, sketch = false) {
   let boxes = await detect(src);
   if (!boxes.length) return null;
@@ -93,59 +106,103 @@ async function faceArt(src, mask, sketch = false) {
   for (const b of boxes) all.push(await landmarks(src, b));
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
   for (const b of boxes) { x0 = Math.min(x0, b.x1); y0 = Math.min(y0, b.y1); x1 = Math.max(x1, b.x2); y1 = Math.max(y1, b.y2); }
-  const fw = x1 - x0, fh = y1 - y0, m = mask ? 0.9 : 0.25;                // margin around the faces (more with the subject outline: hair, shoulders)
-  const rx0 = x0 - fw * m, ry0 = y0 - fh * m * (mask ? 0.8 : 1), rw = fw * (1 + 2 * m), rh = fh * (1 + (mask ? 1.9 : 2) * m);
+  const fw = x1 - x0, fh = y1 - y0, W = src.width, H = src.height;
+  let rx0 = x0 - fw * 0.25, ry0 = y0 - fh * 0.25, rw = fw * 1.5, rh = fh * 1.5;
+  if (mask) {                                                       // frame the whole subject (hair, shoulders), not just the face
+    let a0 = W, b0 = H, a1 = 0, b1 = 0;
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (mask[y * W + x] > 0.5) { if (x < a0) a0 = x; if (x > a1) a1 = x; if (y < b0) b0 = y; if (y > b1) b1 = y; }
+    if (a1 > a0 && b1 > b0) { const m = Math.max(a1 - a0, b1 - b0) * 0.05; rx0 = a0 - m; ry0 = b0 - m; rw = a1 - a0 + 2 * m; rh = b1 - b0 + 2 * m; }
+  }
   const k = 640 / Math.max(rw, rh), cw = Math.round(rw * k), ch = Math.round(rh * k), X = (x) => (x - rx0) * k, Y = (y) => (y - ry0) * k, cv = E.createCanvas(cw, ch), c = cv.getContext('2d');
   c.fillStyle = '#fff'; c.fillRect(0, 0, cw, ch);
-  c.strokeStyle = '#000'; c.lineWidth = 3; c.lineJoin = c.lineCap = 'round';
-  if (mask) {                                                       // the subject's outline: boundary pixels of the mask
-    const W = src.width, H = src.height;
-    c.fillStyle = '#000';
-    for (let y = 1; y < H - 1; y += 1) for (let x = 1; x < W - 1; x += 1) {
-      const i = y * W + x;
-      if (mask[i] > 0.5 && (mask[i - 1] <= 0.5 || mask[i + 1] <= 0.5 || mask[i - W] <= 0.5 || mask[i + W] <= 0.5)) {
-        const px = X(x), py = Y(y);
-        if (px >= 0 && py >= 0 && px < cw && py < ch) c.fillRect(px - 1.2, py - 1.2, 2.4, 2.4);
+  c.strokeStyle = '#000'; c.fillStyle = '#000'; c.lineWidth = 3; c.lineJoin = c.lineCap = 'round';
+  const P = (L, ids) => ids.map((i) => [X(L[i][0]), Y(L[i][1])]);
+  // zones in crop pixels: the face box's skin (kept clean) and the eye regions (kept detailed, for glasses and lids)
+  const skin = boxes.map((b) => ({ x0: X(b.x1), y0: Y(b.y1), x1: X(b.x2), y1: Y(b.y2) }));
+  const eyeZone = all.flatMap((L) => [[33, 42], [87, 96]].map(([a, b]) => {
+    const e = P(L, range(a, b)), ex = e.map((p) => p[0]), ey = e.map((p) => p[1]), w = Math.max(...ex) - Math.min(...ex);
+    return { x0: Math.min(...ex) - w * 1.0, x1: Math.max(...ex) + w * 1.0, y0: Math.min(...ey) - w * 1.0, y1: Math.max(...ey) + w * 1.1 };
+  }));
+  const within = (z, x, y) => x >= z.x0 && x <= z.x1 && y >= z.y0 && y <= z.y1;
+  const inside = new Uint8Array(cw * ch);
+  for (let y = 0; y < ch; y++) for (let x = 0; x < cw; x++) {
+    const sx = Math.min(W - 1, Math.max(0, Math.round(rx0 + x / k))), sy = Math.min(H - 1, Math.max(0, Math.round(ry0 + y / k)));
+    if (mask) inside[y * cw + x] = mask[sy * W + sx] > 0.5 ? 1 : 0;
+    else inside[y * cw + x] = skin.some((z) => within({ x0: z.x0 - (z.x1 - z.x0) * 0.4, x1: z.x1 + (z.x1 - z.x0) * 0.4, y0: z.y0 - (z.y1 - z.y0) * 0.4, y1: z.y1 + (z.y1 - z.y0) * 0.4 }, x, y)) ? 1 : 0;
+  }
+  if (mask) {                                                       // the subject's outline: smoothed so it is one clean line
+    const sm = new Float32Array(cw * ch);
+    for (let pass = 0; pass < 2; pass++) {
+      const from = pass ? sm.slice() : Float32Array.from(inside);
+      for (let y = 2; y < ch - 2; y++) for (let x = 2; x < cw - 2; x++) {
+        let t = 0;
+        for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) t += from[(y + dy) * cw + x + dx];
+        sm[y * cw + x] = t / 25;
       }
     }
-  }
-  if (sketch) {                                                     // the photo's own edges (hair, lids, shading), inside the subject or around the face
-    const g = E.createCanvas(cw, ch), gx = g.getContext('2d', { willReadFrequently: true });
-    gx.filter = 'grayscale(1) blur(1.6px)';
-    gx.drawImage(src, rx0, ry0, rw, rh, 0, 0, cw, ch);
-    const d = gx.getImageData(0, 0, cw, ch).data, mag = new Float32Array(cw * ch), inside = new Uint8Array(cw * ch), W = src.width;
-    for (let y = 0; y < ch; y++) for (let x = 0; x < cw; x++) {
-      const sx = Math.min(src.width - 1, Math.max(0, Math.round(rx0 + x / k))), sy = Math.min(src.height - 1, Math.max(0, Math.round(ry0 + y / k)));
-      if (mask) inside[y * cw + x] = mask[sy * W + sx] > 0.5 ? 1 : 0;
-      else { const ex = (x / k + rx0 - (x0 + x1) / 2) / (fw * 0.85), ey = (y / k + ry0 - (y0 + y1) / 2) / (fh * 0.85); inside[y * cw + x] = ex * ex + ey * ey < 1 ? 1 : 0; }
-    }
-    let max = 1e-6;
     for (let y = 1; y < ch - 1; y++) for (let x = 1; x < cw - 1; x++) {
+      const i = y * cw + x;
+      if (sm[i] > 0.5 && (sm[i - 1] <= 0.5 || sm[i + 1] <= 0.5 || sm[i - cw] <= 0.5 || sm[i + cw] <= 0.5)) c.fillRect(x - 0.8, y - 0.8, 2.2, 2.2);
+    }
+  }
+  if (sketch) {                                                     // the photo's edges (Canny), off the clean skin and away from the drawn eyes and brows
+    const g = E.createCanvas(cw, ch), gx = g.getContext('2d', { willReadFrequently: true });
+    gx.filter = 'grayscale(1) blur(1.4px)';
+    gx.fillStyle = '#fff'; gx.fillRect(0, 0, cw, ch);
+    gx.drawImage(src, rx0, ry0, rw, rh, 0, 0, cw, ch);
+    const d = gx.getImageData(0, 0, cw, ch).data, N = cw * ch, mag = new Float32Array(N), dir = new Uint8Array(N), keep = new Uint8Array(N), zone = new Uint8Array(N);
+    const own = all.flatMap((L) => [[33, 42], [87, 96], [43, 51], [97, 105]].map(([a, b]) => {                    // where the landmark eyes and brows go
+      const e = P(L, range(a, b)), ex = e.map((p) => p[0]), ey = e.map((p) => p[1]), w = Math.max(...ex) - Math.min(...ex);
+      return { x0: Math.min(...ex) - w * 0.04, x1: Math.max(...ex) + w * 0.04, y0: Math.min(...ey) - w * 0.04, y1: Math.max(...ey) + w * 0.04 };
+    }));
+    for (let y = 2; y < ch - 2; y++) for (let x = 2; x < cw - 2; x++) {
       const i = y * cw + x, v = (j) => d[4 * j];
       const sx = v(i - cw + 1) + 2 * v(i + 1) + v(i + cw + 1) - v(i - cw - 1) - 2 * v(i - 1) - v(i + cw - 1), sy = v(i + cw - 1) + 2 * v(i + cw) + v(i + cw + 1) - v(i - cw - 1) - 2 * v(i - cw) - v(i - cw + 1);
       mag[i] = Math.hypot(sx, sy);
-      if (inside[i] && mag[i] > max) max = mag[i];
+      const ang = (Math.atan2(sy, sx) + Math.PI) / Math.PI * 4;       // 0..8, in units of 45 degrees
+      dir[i] = Math.round(ang) % 4;                                   // 0: horizontal gradient, 1: diagonal, 2: vertical, 3: other diagonal
+      if (inside[i] && !own.some((z) => within(z, x, y)) && (eyeZone.some((z) => within(z, x, y)) || !skin.some((z) => within(z, x, y)))) keep[i] = 1;
+      zone[i] = eyeZone.some((z) => within(z, x, y)) ? 1 : 0;
     }
-    const vals = [];
-    for (let i = 0; i < mag.length; i += 3) if (inside[i]) vals.push(mag[i]);
-    vals.sort((a, b) => a - b);
-    const t = vals.length ? vals[Math.floor(vals.length * 0.86)] : max;     // the strongest 14% of the edges
-    c.fillStyle = '#000';
-    for (let y = 2; y < ch - 2; y++) for (let x = 2; x < cw - 2; x++) { const i = y * cw + x; if (inside[i] && mag[i] > t) c.fillRect(x, y, 1, 1); }
+    const step = [[1, 0], [1, 1], [0, 1], [-1, 1]], thin = new Float32Array(N);       // non-maximum suppression along the gradient
+    for (let y = 2; y < ch - 2; y++) for (let x = 2; x < cw - 2; x++) {
+      const i = y * cw + x, [dx, dy] = step[dir[i]];
+      if (keep[i] && mag[i] >= mag[i + dy * cw + dx] && mag[i] >= mag[i - dy * cw - dx]) thin[i] = mag[i];
+    }
+    const hi = (zn) => { const v = []; for (let i = 0; i < N; i += 2) if (keep[i] && zone[i] === zn && thin[i] > 0) v.push(thin[i]); v.sort((p, q) => p - q); return v.length ? v[Math.floor(v.length * (zn ? 0.78 : 0.96))] : 1e9; };
+    const hiT = [hi(0), hi(1)], strong = [], mark = new Uint8Array(N);                   // hysteresis: strong edges, plus the weaker ones joined to them
+    for (let i = 0; i < N; i++) if (thin[i] > hiT[zone[i]]) { mark[i] = 1; strong.push(i); }
+    const comp = [];
+    for (const s0 of strong) {
+      if (mark[s0] === 2) continue;
+      const list = [s0]; mark[s0] = 2;
+      for (let h = 0; h < list.length; h++) for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+        const q = list[h] + dy * cw + dx;
+        if (q >= 0 && q < N && mark[q] !== 2 && thin[q] > hiT[zone[q]] * 0.5) { mark[q] = 2; list.push(q); }
+      }
+      comp.push(list);
+    }
+    for (const list of comp) if (list.length >= 40) for (const i of list) c.fillRect(i % cw, (i / cw) | 0, 1.4, 1.4);       // short scraps are noise
   }
   for (const L of all) {
-    const P = (ids) => ids.map((i) => [X(L[i][0]), Y(L[i][1])]);
-    if (!sketch) curve(c, P(JAW), false);                              // with the photo's edges the real jaw is already there
-    for (const [a, b] of [[43, 51], [97, 105]]) curve(c, byAngle(P(range(a, b))), true);          // brows
-    for (const [a, b] of [[33, 42], [87, 96]]) {                                                  // eyes, with an iris
-      const eye = P(range(a, b)), [ex, ey] = centre(eye), w2 = Math.max(...eye.map((p) => p[0])) - Math.min(...eye.map((p) => p[0]));
-      curve(c, byAngle(eye), true);
-      c.beginPath(); c.arc(ex, ey, w2 * 0.16, 0, Math.PI * 2); c.stroke();
+    if (!mask) curve(c, P(L, JAW), false);                           // no subject outline: the jaw from the landmarks
+    for (const [a, b] of [[43, 51], [97, 105]]) { c.lineWidth = 4; curve(c, bins(P(L, range(a, b)), 6, 'mid'), false); c.lineWidth = 3; }   // brows: one stroke along the middle (filled shapes thin badly when traced)
+    for (const [a, b] of [[33, 42], [87, 96]]) {                                                  // eyes: lid outline, and an iris and pupil clipped by the lids
+      const eye = byAngle(P(L, range(a, b))), [ex, ey] = centre(eye), ew = Math.max(...eye.map((p) => p[0])) - Math.min(...eye.map((p) => p[0])), eh = Math.max(...eye.map((p) => p[1])) - Math.min(...eye.map((p) => p[1]));
+      c.save();
+      c.beginPath(); eye.forEach((p, i) => (i ? c.lineTo(p[0], p[1]) : c.moveTo(p[0], p[1]))); c.closePath(); c.clip();
+      const ir = Math.max(ew * 0.18, eh * 0.5);
+      c.lineWidth = 2; c.beginPath(); c.arc(ex, ey, ir, 0, Math.PI * 2); c.stroke();
+      c.restore();
+      c.lineWidth = 3.5; c.beginPath(); eye.forEach((p, i) => (i ? c.lineTo(p[0], p[1]) : c.moveTo(p[0], p[1]))); c.closePath(); c.stroke(); c.lineWidth = 3;
     }
-    if (!sketch) { curve(c, P([76, 77, 78, 79, 80, 85, 84, 83, 82]), false); curve(c, P([73, 74]), false); }   // nose
-    const mouth = P(range(52, 71)), outer = hull(mouth), inner = mouth.filter((p) => !outer.includes(p));
-    curve(c, outer, true);
-    if (inner.length > 3) curve(c, byAngle(inner), true);
+    curve(c, P(L, [76, 77, 78, 79, 80, 85, 84, 83, 82]), false);                                  // nose, with nostrils
+    for (const i of [79, 84]) { c.beginPath(); c.arc(X(L[i][0]), Y(L[i][1]), 2.5, 0, Math.PI * 2); c.fill(); }
+    const mouth = P(L, range(52, 71)), cl = mouth.reduce((p, q) => (q[0] < p[0] ? q : p)), cr = mouth.reduce((p, q) => (q[0] > p[0] ? q : p)), an = Math.atan2(cr[1] - cl[1], cr[0] - cl[0]), [mx, my] = centre(mouth);
+    const rot = (pts, a) => pts.map(([x, y]) => [mx + (x - mx) * Math.cos(a) - (y - my) * Math.sin(a), my + (x - mx) * Math.sin(a) + (y - my) * Math.cos(a)]);
+    const flat = rot(mouth, -an), top = rot(bins(flat, 6, 'min'), an), bot = rot(bins(flat, 6, 'max'), an), mid = rot(bins(flat, 6, 'mid'), an);   // level the mouth first, so a tilted head still bins correctly
+    curve(c, top.concat(bot.slice().reverse()), true);                                            // lips: top edge and bottom edge, joined at the corners
+    curve(c, mid, false);                                                                          // the line where they part
   }
   return { cv, faces: boxes.length };
 }
