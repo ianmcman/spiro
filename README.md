@@ -137,7 +137,7 @@ cd server
 docker compose up -d --build     # http://HOST:8099/ ; LAB_PORT in .env changes the port
 ```
 
-The image is Node 22 on Alpine with ffmpeg. Exports run one at a time. `cd server && npm install && node test.js` prints checksums of a few models for comparing the engine against the browser.
+The image is Node 22 on Debian with ffmpeg. Exports run one at a time. `cd server && npm install && node test.js` prints checksums of a few models for comparing the engine against the browser.
 
 ## Run on the homelab
 
