@@ -416,7 +416,7 @@ const MODEL = process.env.MODEL_PATH || path.join(__dirname, 'models', 'u2netp.o
 let seg = null;
 async function subjectMask(src) {
   if (!seg) {
-    try { const ort = require('onnxruntime-node'); seg = { ort, s: await ort.InferenceSession.create(MODEL) }; }
+    try { const ort = require('onnxruntime-node'); seg = { ort, s: await ort.InferenceSession.create(MODEL, { intraOpNumThreads: 4 }) }; }
     catch (e) { console.error(e); throw new HttpError(501, 'the outline model is not installed on this server'); }
   }
   const S = 320, cv = E.createCanvas(S, S), cx = cv.getContext('2d');
