@@ -66,7 +66,7 @@ Type a name and press Play. A chain of rotating circles (a Fourier series of the
 
 - **Installable:** add it to a home screen for a full-screen app with its own icon. A service worker caches it for offline use.
 - **Private:** no analytics, no cookies, no third-party requests. The font is bundled and the content security policy allows only the page's own files.
-- **Responsive:** a slide-over panel on phones, a sidebar on desktop.
+- **Built for phones:** on a phone the canvas is full screen with a thumb-reach dock (Play, Wheels, Fit, Shuffle, Edit). Edit opens a tabbed sheet (Design, Size, Look, Gallery, Export) that shows one group at a time with large touch targets, and the pattern shifts up so it stays visible above it. Landscape phones get a side sheet. Desktop keeps the full sidebar.
 - **Editable readouts:** click the number beside any slider and type a value.
 - **SEO ready:** title, description, Open Graph and Twitter cards, structured data, sitemap and robots.txt.
 

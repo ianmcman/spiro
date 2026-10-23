@@ -200,8 +200,41 @@ body:not(.open) .fab { display: block; }
   body.open .panel { transform: translateX(0); }
   .panel-body { padding-bottom: max(23px, env(safe-area-inset-bottom)); }
 }
+/* phones: the controls become a tabbed sheet (one group at a time) above a bottom dock */
+.tabs, .phone-only, .dock-only { display: none; }
+@media (max-width: 639px), (orientation: landscape) and (max-height: 499px) and (min-width: 640px) {
+  .phone-only { display: inline-flex; align-items: center; justify-content: center; min-width: 76px; }
+  .panel-head { padding: 6px 10px 6px 15px; gap: 8px; }
+  .panel-head h1 { margin-right: auto; font-size: 1.3rem; }
+  .tabs { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; flex: none; border-bottom: 1px solid var(--separator); }
+  .tabs button { min-height: 44px; padding: 0 2px; background: none; border: 0; border-bottom: 2px solid transparent; color: var(--text); font: inherit; font-size: 1.2rem; cursor: pointer; touch-action: manipulation; }
+  .tabs button[aria-selected="true"] { color: var(--primary); border-bottom-color: var(--primary); }
+  .panel[data-tab="design"] .panel-body > :not([data-tab="design"]),
+  .panel[data-tab="size"] .panel-body > :not([data-tab="size"]),
+  .panel[data-tab="look"] .panel-body > :not([data-tab="look"]),
+  .panel[data-tab="gallery"] .panel-body > :not([data-tab="gallery"]),
+  .panel[data-tab="export"] .panel-body > :not([data-tab="export"]) { display: none; }
+  .panel-body { padding-top: 12px; }
+  .btn, .seg button, .check { min-height: 44px; }
+  input[type=range] { height: 38px; }
+  input[type=range]::-webkit-slider-thumb { width: 22px; height: 22px; margin-top: -9.5px; }
+  input[type=range]::-moz-range-thumb { width: 22px; height: 22px; }
+}
+@media (max-width: 639px) {
+  .dock-only { display: inline-flex; align-items: center; justify-content: center; }
+  .fab { display: none !important; }
+  .quick {
+    position: fixed; z-index: 25; left: 0; right: 0; top: auto; bottom: 0; display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px;
+    padding: 8px 10px calc(8px + env(safe-area-inset-bottom)); background: var(--bg); border: 0; border-top: 1px solid var(--card-border); border-radius: 0; box-shadow: none;
+  }
+  .quick button { min-height: 46px; min-width: 0; padding: 0 4px; }
+  #q-slower, #q-faster, .quick output { display: none; }
+  .panel { bottom: calc(62px + env(safe-area-inset-bottom)); max-height: 46vh; max-height: 46dvh; padding-bottom: 0; border-bottom: 1px solid var(--card-border); }
+  #view { transition: transform .25s ease-out; }
+  body.open #view { transform: translateY(calc(-23dvh - 31px)); }   /* keep the pattern in the part the sheet doesn't cover */
+}
 @media (hover: none) { .keys { display: none; } }
-@media (prefers-reduced-motion: reduce) { .panel { transition: none !important; } }
+@media (prefers-reduced-motion: reduce) { .panel, #view { transition: none !important; } }
 </style>
 </head>
 <body>
@@ -214,23 +247,33 @@ body:not(.open) .fab { display: block; }
       <output id="q-speed" aria-label="Speed"></output>
       <button type="button" id="q-faster" aria-label="Faster">+</button>
       <button type="button" id="q-fit">Fit</button>
+      <button type="button" id="q-shuffle" class="dock-only">Shuffle</button>
+      <button type="button" id="q-edit" class="dock-only" aria-pressed="false">Edit</button>
     </div>
     <p class="hint" id="hint">Press <b>Play</b> to draw, or drag around the canvas to roll the wheel by hand.</p>
   </main>
 
-  <aside class="panel" id="panel" aria-label="Controls">
+  <aside class="panel" id="panel" aria-label="Controls" data-tab="design">
     <header class="panel-head">
       <h1>Spirograph</h1>
+      <button type="button" class="btn primary phone-only" id="sheet-draw">Draw</button>
       <button type="button" class="icon-btn" id="close" aria-label="Close controls">&times;</button>
     </header>
+    <div class="tabs" id="tabs" role="tablist" aria-label="Control groups">
+      <button type="button" role="tab" data-tab="design" aria-selected="true">Design</button>
+      <button type="button" role="tab" data-tab="size" class="spiro-only" aria-selected="false">Size</button>
+      <button type="button" role="tab" data-tab="look" aria-selected="false">Look</button>
+      <button type="button" role="tab" data-tab="gallery" class="spiro-only" aria-selected="false">Gallery</button>
+      <button type="button" role="tab" data-tab="export" aria-selected="false">Export</button>
+    </div>
 
     <div class="panel-body">
-      <div class="seg first" id="mode" role="radiogroup" aria-label="Mode">
+      <div class="seg first" id="mode" data-tab="design" role="radiogroup" aria-label="Mode">
         <button type="button" role="radio" aria-checked="true" data-mode="spiro">Spirograph</button>
         <button type="button" role="radio" aria-checked="false" data-mode="name">Name</button>
       </div>
 
-      <section class="widget">
+      <section class="widget" data-tab="export">
         <h2 class="widget-header">Actions</h2>
         <div class="card">
           <div class="actions">
@@ -254,7 +297,7 @@ body:not(.open) .fab { display: block; }
         </div>
       </section>
 
-      <section class="widget name-only">
+      <section class="widget name-only" data-tab="design">
         <h2 class="widget-header">Name</h2>
         <div class="card">
           <label class="field"><span>Name or text</span><input type="text" class="text" id="text" maxlength="80" autocomplete="off" spellcheck="false" placeholder="e.g. Ada, 12 May 2026"></label>
@@ -263,7 +306,7 @@ body:not(.open) .fab { display: block; }
         </div>
       </section>
 
-      <section class="widget spiro-only">
+      <section class="widget spiro-only" data-tab="design">
         <h2 class="widget-header">Shapes</h2>
         <div class="card">
           <div class="pair">
@@ -278,7 +321,7 @@ body:not(.open) .fab { display: block; }
         </div>
       </section>
 
-      <section class="widget spiro-only">
+      <section class="widget spiro-only" data-tab="size">
         <h2 class="widget-header">Sizes</h2>
         <div class="card">
           <div class="seg first" id="sizing" role="radiogroup" aria-label="Size by">
@@ -297,7 +340,7 @@ body:not(.open) .fab { display: block; }
         </div>
       </section>
 
-      <section class="widget spiro-only">
+      <section class="widget spiro-only" data-tab="size">
         <h2 class="widget-header">Second wheel</h2>
         <div class="card" id="card-second">
           <label class="check"><input type="checkbox" id="second"><span>Ride a second wheel on the wheel</span></label>
@@ -314,7 +357,7 @@ body:not(.open) .fab { display: block; }
         </div>
       </section>
 
-      <section class="widget">
+      <section class="widget" data-tab="look">
         <h2 class="widget-header">Appearance</h2>
         <div class="card">
           <label class="field ink"><span>Ink</span><select id="ink"></select></label>
@@ -325,7 +368,7 @@ body:not(.open) .fab { display: block; }
         </div>
       </section>
 
-      <section class="widget">
+      <section class="widget" data-tab="look">
         <h2 class="widget-header">Pattern</h2>
         <div class="card readout" aria-live="polite">
           <dl>
@@ -337,12 +380,12 @@ body:not(.open) .fab { display: block; }
         </div>
       </section>
 
-      <section class="widget spiro-only">
+      <section class="widget spiro-only" data-tab="gallery">
         <h2 class="widget-header">Gallery</h2>
         <div class="card"><div class="gallery" id="gallery"></div></div>
       </section>
 
-      <footer class="foot">&copy; 2026 Ian McManus &middot; MIT License &middot; <a href="https://github.com/ianmcman/spiro" target="_blank" rel="noopener noreferrer">Source on GitHub</a> &middot; <a href="https://github.com/sponsors/ianmcman" target="_blank" rel="noopener noreferrer">Sponsor</a></footer>
+      <footer class="foot" data-tab="export">&copy; 2026 Ian McManus &middot; MIT License &middot; <a href="https://github.com/ianmcman/spiro" target="_blank" rel="noopener noreferrer">Source on GitHub</a> &middot; <a href="https://github.com/sponsors/ianmcman" target="_blank" rel="noopener noreferrer">Sponsor</a></footer>
     </div>
   </aside>
 </div>
@@ -1496,7 +1539,12 @@ function finish() {
 }
 
 const PHONE_Q = '(max-width: 639px), (orientation: landscape) and (max-height: 499px) and (min-width: 640px)';
-function setOpen(o) { document.body.classList.toggle('open', o); if (o) paintGallery(); }
+function setOpen(o) { document.body.classList.toggle('open', o); $('q-edit').setAttribute('aria-pressed', String(o)); if (o) paintGallery(); }
+function setTab(t) {
+  $('panel').dataset.tab = t;
+  document.querySelectorAll('#tabs button').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.tab === t)));
+  $('panel').querySelector('.panel-body').scrollTop = 0;
+}
 
 // Any other way of setting the pattern replaces a name.
 // The panel shows one mode's controls; the Name tab keeps the last name to bring back.
@@ -1505,6 +1553,7 @@ function setMode(m) {
   mode = m;
   $('panel').classList.toggle('name-mode', m === 'name');
   document.querySelectorAll('#mode button').forEach((b) => b.setAttribute('aria-checked', String(b.dataset.mode === m)));
+  if (m === 'name' && ['size', 'gallery'].includes($('panel').dataset.tab)) setTab('design');   // those tabs hide in Name mode
 }
 function dropText() {
   if (P.text) { lastText = P.text; P.text = ''; $('text').value = ''; }
@@ -1766,6 +1815,10 @@ function init() {
     act();
   });
   $('fab').addEventListener('click', () => setOpen(true));
+  $('tabs').addEventListener('click', (e) => { const b = e.target.closest('button'); if (b) setTab(b.dataset.tab); });
+  $('q-shuffle').addEventListener('click', shuffle);
+  $('q-edit').addEventListener('click', () => setOpen(!document.body.classList.contains('open')));
+  $('sheet-draw').addEventListener('click', () => $('draw').click());
 
   resize();
 }
