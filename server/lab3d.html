@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>3D Spirograph (lab)</title>
+<style>
+  :root { --bg: #1b1c17; --card: #282923; --line: #3e3d32; --fg: #f8f8f2; --dim: #a6a68f; --acc: #66d9ef; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); font: 13px/1.4 "JetBrains Mono", ui-monospace, monospace; }
+  #app { display: grid; grid-template-columns: 310px 1fr; height: 100%; }
+  #panel { overflow-y: auto; padding: 12px; border-right: 1px solid var(--line); background: var(--card); }
+  #view { position: relative; min-width: 0; }
+  canvas { display: block; width: 100%; height: 100%; }
+  h1 { font-size: 13px; margin: 0 0 8px; text-transform: uppercase; letter-spacing: .08em; }
+  h2 { font-size: 11px; margin: 14px 0 6px; text-transform: uppercase; letter-spacing: .08em; color: var(--dim); }
+  a { color: var(--acc); }
+  label { display: grid; grid-template-columns: 78px 1fr 44px; gap: 6px; align-items: center; margin: 3px 0; color: var(--dim); }
+  label.wide { grid-template-columns: 1fr auto; }
+  input[type=range] { width: 100%; accent-color: var(--acc); }
+  output { text-align: right; color: var(--fg); }
+  .arm { border: 1px solid var(--line); border-radius: 4px; padding: 6px 8px; margin: 6px 0; }
+  .arm b { color: var(--acc); }
+  .row { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+  button, select, input[type=number] { background: var(--bg); color: var(--fg); border: 1px solid var(--line); border-radius: 4px; padding: 6px 10px; font: inherit; }
+  button { cursor: pointer; }
+  button:hover { border-color: var(--acc); }
+  input[type=number] { width: 70px; }
+  .note { color: var(--dim); font-size: 11px; margin-top: 10px; }
+  @media (max-width: 760px) { #app { grid-template-columns: 1fr; grid-template-rows: 55% 45%; } #view { order: -1; } #panel { border-right: 0; border-top: 1px solid var(--line); } }
+</style>
+<script type="importmap">{ "imports": { "three": "/vendor/three/build/three.module.js", "three/addons/": "/vendor/three/examples/jsm/" } }</script>
+</head>
+<body>
+<div id="app">
+  <div id="panel">
+    <h1>3D Spirograph</h1>
+    <a href="/">&larr; back to the lab</a>
+    <h2>Arms</h2>
+    <div id="arms"></div>
+    <p class="note">Three arms joined end to end. Each turns about its own axis (tilt from vertical, azimuth around it) at a whole-number speed, carrying everything after it. The pen is at the tip. Whole-number speeds close the curve after one turn.</p>
+    <h2>Look</h2>
+    <label><span>Hue</span><input type="range" id="hue" min="0" max="360" value="190"><output></output></label>
+    <label><span>Hue range</span><input type="range" id="hrange" min="0" max="720" value="240"><output></output></label>
+    <label><span>Points</span><input type="range" id="pts" min="1000" max="20000" step="500" value="8000"><output></output></label>
+    <div class="row"><select id="mode"><option value="line">Line</option><option value="tube">Tube</option></select>
+      <label class="wide" style="margin:0"><span>Spin</span><input type="checkbox" id="spin" checked></label></div>
+    <div class="row"><button id="rand">Randomise</button><button id="replay">Draw again</button></div>
+    <h2>Export</h2>
+    <label class="wide"><span>Size (mm)</span><input type="number" id="mm" value="80" min="10" max="300"></label>
+    <label class="wide"><span>Tube (mm)</span><input type="number" id="tube" value="1.2" min="0.2" max="10" step="0.1"></label>
+    <div class="row"><button id="png">PNG</button><button id="stl">STL</button><button id="webm">Turntable (WebM)</button></div>
+    <div class="row"><button id="link">Copy link</button></div>
+    <p class="note" id="msg"></p>
+  </div>
+  <div id="view"></div>
+</div>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { STLExporter } from 'three/addons/exporters/STLExporter.js';
+
+const $ = (id) => document.getElementById(id);
+const DEF = {
+  arms: [{ L: 1, w: 1, tilt: 90, az: 0, ph: 0 }, { L: 0.6, w: 5, tilt: 40, az: 70, ph: 0 }, { L: 0.35, w: -9, tilt: 110, az: 200, ph: 0 }],
+  hue: 190, hrange: 240, pts: 8000, mode: 'line', spin: true, mm: 80, tube: 1.2,
+};
+let S = JSON.parse(JSON.stringify(DEF));
+try { if (location.hash.length > 1) S = Object.assign(S, JSON.parse(atob(location.hash.slice(1)))); } catch (_) { /* bad link: defaults */ }
+
+/* ---- the curve ---- */
+const axisOf = (tilt, az) => { const t = tilt * Math.PI / 180, a = az * Math.PI / 180; return new THREE.Vector3(Math.sin(t) * Math.cos(a), Math.cos(t), Math.sin(t) * Math.sin(a)).normalize(); };
+function armFrames() {
+  return S.arms.map((a) => {
+    const ax = axisOf(a.tilt, a.az), ref = Math.abs(ax.x) < 0.9 ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 0, 1);
+    const d = new THREE.Vector3().crossVectors(ax, ref).normalize().applyAxisAngle(ax, a.ph * Math.PI / 180).multiplyScalar(a.L);
+    return { ax, d, w: Math.round(a.w) };
+  });
+}
+// p(t) = R1(L1 d1 + R2(L2 d2 + R3 L3 d3)), each R_i a turn about its own axis by w_i t
+function curve(n) {
+  const fr = armFrames(), out = new Array(n), v = new THREE.Vector3();
+  for (let i = 0; i < n; i++) {
+    const t = 2 * Math.PI * i / n;
+    v.set(0, 0, 0);
+    for (let k = fr.length - 1; k >= 0; k--) v.add(fr[k].d).applyAxisAngle(fr[k].ax, fr[k].w * t);
+    out[i] = v.clone();
+  }
+  return out;
+}
+// centre on the middle of its bounds, scale so the longest side is size
+function fit(pts, size) {
+  const box = new THREE.Box3().setFromPoints(pts), c = box.getCenter(new THREE.Vector3()), m = Math.max(...box.getSize(new THREE.Vector3()).toArray()) || 1;
+  return pts.map((p) => p.clone().sub(c).multiplyScalar(size / m));
+}
+
+/* ---- the view ---- */
+const view = $('view'), renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+view.appendChild(renderer.domElement);
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x1b1c17);
+const camera = new THREE.PerspectiveCamera(40, 1, 1, 2000);
+camera.position.set(0, 60, 180);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+scene.add(new THREE.HemisphereLight(0xffffff, 0x303030, 1.4));
+const sun = new THREE.DirectionalLight(0xffffff, 2); sun.position.set(80, 120, 100); scene.add(sun);
+function size() { const w = view.clientWidth, h = view.clientHeight; renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix(); }
+new ResizeObserver(size).observe(view); size();
+
+let obj = null, drawn = 0, total = 0, growing = false;
+function colours(n) {
+  const c = new THREE.Color(), a = new Float32Array(n * 3);
+  for (let i = 0; i < n; i++) { c.setHSL(((S.hue + S.hrange * i / n) % 360) / 360, 0.75, 0.6); a.set([c.r, c.g, c.b], 3 * i); }
+  return a;
+}
+function build() {
+  if (obj) { scene.remove(obj); obj.geometry.dispose(); }
+  const pts = fit(curve(S.pts), 100), n = pts.length;
+  if (S.mode === 'tube') {
+    const g = new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts, true, 'centripetal'), Math.min(n, 4000), 1.2, 8, true), cnt = g.attributes.position.count, col = new Float32Array(cnt * 3), seg = 9, base = colours(Math.min(n, 4000) + 1);
+    for (let v = 0; v < cnt; v++) col.set(base.subarray(3 * Math.floor(v / seg), 3 * Math.floor(v / seg) + 3), 3 * v);
+    g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    obj = new THREE.Mesh(g, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.4, metalness: 0.2 }));
+    total = g.index.count;
+  } else {
+    const pos = new Float32Array((n + 1) * 3);
+    pts.forEach((p, i) => pos.set([p.x, p.y, p.z], 3 * i));
+    pos.set([pts[0].x, pts[0].y, pts[0].z], 3 * n);
+    const g = new THREE.BufferGeometry(), base = colours(n + 1);
+    g.setAttribute('position', new THREE.BufferAttribute(pos, 3)); g.setAttribute('color', new THREE.BufferAttribute(base, 3));
+    obj = new THREE.Line(g, new THREE.LineBasicMaterial({ vertexColors: true }));
+    total = n + 1;
+  }
+  scene.add(obj);
+  drawn = 0; growing = true;
+}
+function setDraw(k) { if (S.mode === 'tube') obj.geometry.setDrawRange(0, Math.floor(k / 3) * 3); else obj.geometry.setDrawRange(0, k); }
+renderer.setAnimationLoop(() => {
+  if (obj && growing) { drawn = Math.min(total, drawn + total / 240); setDraw(drawn); if (drawn >= total) growing = false; }
+  controls.autoRotate = S.spin; controls.update();
+  renderer.render(scene, camera);
+});
+
+/* ---- the panel ---- */
+const SL = [['L', 'Length', 0, 1.5, 0.01], ['w', 'Speed', -24, 24, 1], ['tilt', 'Tilt', 0, 180, 1], ['az', 'Azimuth', 0, 360, 1], ['ph', 'Phase', 0, 360, 1]];
+function bind(el, get, set, after) {
+  const out = el.parentElement.querySelector('output');
+  el.value = get(); if (out) out.textContent = get();
+  el.oninput = () => { set(el.type === 'checkbox' ? el.checked : el.tagName === 'SELECT' ? el.value : +el.value); if (out) out.textContent = el.value; after(); };
+}
+function save() { history.replaceState(null, '', '#' + btoa(JSON.stringify(S))); }
+let timer = 0;
+const change = () => { save(); clearTimeout(timer); timer = setTimeout(build, 60); };
+function panel() {
+  $('arms').innerHTML = S.arms.map((a, i) => '<div class="arm"><b>Arm ' + (i + 1) + '</b>' + SL.map(([k, name, lo, hi, st]) =>
+    '<label><span>' + name + '</span><input type="range" data-i="' + i + '" data-k="' + k + '" min="' + lo + '" max="' + hi + '" step="' + st + '"><output></output></label>').join('') + '</div>').join('');
+  for (const el of document.querySelectorAll('#arms input')) bind(el, () => S.arms[el.dataset.i][el.dataset.k], (v) => { S.arms[el.dataset.i][el.dataset.k] = v; }, change);
+  for (const k of ['hue', 'hrange', 'pts']) bind($(k), () => S[k], (v) => { S[k] = v; }, change);
+  bind($('mode'), () => S.mode, (v) => { S.mode = v; }, change);
+  bind($('spin'), () => S.spin, (v) => { S.spin = v; }, save);
+  $('spin').checked = S.spin;
+  $('mm').value = S.mm; $('tube').value = S.tube;
+  $('mm').oninput = () => { S.mm = +$('mm').value || 80; save(); }; $('tube').oninput = () => { S.tube = +$('tube').value || 1.2; save(); };
+}
+const rnd = (a, b) => a + Math.random() * (b - a), ri = (a, b) => Math.round(rnd(a, b));
+$('rand').onclick = () => {
+  S.arms = [0, 1, 2].map((i) => ({ L: +[1, rnd(0.3, 0.9), rnd(0.1, 0.6)][i].toFixed(2), w: (Math.random() < 0.5 ? -1 : 1) * ri(...[[1, 4], [3, 12], [6, 20]][i]), tilt: ri(0, 180), az: ri(0, 360), ph: ri(0, 360) }));
+  S.hue = ri(0, 360); panel(); change();
+};
+$('replay').onclick = () => { drawn = 0; growing = true; };
+$('link').onclick = () => navigator.clipboard.writeText(location.href).then(() => msg('Link copied'));
+const msg = (t) => { $('msg').textContent = t; };
+function download(blob, name) { const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 5000); }
+
+/* ---- exports ---- */
+$('png').onclick = () => { setDraw(total); renderer.render(scene, camera); renderer.domElement.toBlob((b) => download(b, '3D Spirograph.png'), 'image/png'); };
+$('stl').onclick = () => {                                   // a closed tube along the curve, in millimetres
+  const pts = fit(curve(S.pts), S.mm), g = new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts, true, 'centripetal'), 4000, S.tube, 12, true);
+  const data = new STLExporter().parse(new THREE.Mesh(g), { binary: true });
+  download(new Blob([data], { type: 'model/stl' }), '3D Spirograph.stl');
+  msg('STL: ' + S.mm + ' mm across, ' + S.tube + ' mm tube radius, ' + (g.index.count / 3) + ' triangles.');
+  g.dispose();
+};
+$('webm').onclick = () => {                                   // one full turn of the camera, recorded from the canvas
+  if (!window.MediaRecorder) { msg('This browser cannot record the canvas.'); return; }
+  setDraw(total); growing = false;
+  const rec = new MediaRecorder(renderer.domElement.captureStream(30), { mimeType: 'video/webm' }), parts = [], was = [S.spin, controls.autoRotateSpeed];
+  rec.ondataavailable = (e) => parts.push(e.data);
+  rec.onstop = () => { S.spin = was[0]; controls.autoRotateSpeed = was[1]; download(new Blob(parts, { type: 'video/webm' }), '3D Spirograph.webm'); msg('Turntable saved.'); };
+  S.spin = true; controls.autoRotateSpeed = 6;                 // 60 / 6 = 10 s per turn
+  rec.start(); msg('Recording 10 s...');
+  setTimeout(() => rec.stop(), 10000);
+};
+
+panel(); build();
+</script>
+</body>
+</html>
