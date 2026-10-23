@@ -1053,6 +1053,12 @@ function maskTerms(b, W, H, o) {
       }
     }
   }
+  if (o.pathOnly) return { ox, oy };                                      // the server joins this walk to other paths before the transform
+  if (!ox.length) return null;
+  return pathTerms(ox, oy, len);
+}
+// A closed path (ox, oy: points in order; a hop of more than 3 px is a pen lift; the end joins back to the start) as Fourier terms.
+function pathTerms(ox, oy, len) {
   if (!ox.length) return null;
   const NAME_M = nameM(len);
   // Resample to NAME_M points evenly in time. Hops longer than 3 px are pen-up and get a reduced share

@@ -83,20 +83,32 @@ async function storePic(bytes, lines = false) {
   if (!fs.existsSync(picFile(id))) fs.writeFileSync(picFile(id), bytes);
   return id;
 }
+// A face drawing is a vector path, not a picture: the points are kept in <id>.paths, with a blank stand-in image.
+const pathFile = (id) => picFile(id) + '.paths';
+function holdPaths(id, paths) { pics.set(id, { src: E.createCanvas(2, 2), paths }); }
 // Make sure every picture the settings mention is decoded (from disk if need be) before the synchronous cleanP.
 async function needPics(...ps) {
   for (const p of ps) {
     const id = p && p.pic && p.pic.id;
     if (typeof id !== 'string' || pics.get(id)) continue;
+    if (PIC_ID.test(id) && fs.existsSync(pathFile(id))) { holdPaths(id, JSON.parse(fs.readFileSync(pathFile(id), 'utf8'))); continue; }
     if (!PIC_ID.test(id) || !fs.existsSync(picFile(id))) throw new HttpError(410, 'picture ' + id + ' is not on the server');
     await decodePic(id, fs.readFileSync(picFile(id)));
   }
 }
+const vectorTermsCache = new Lru(16);
+function vectorTerms(id, paths) {
+  let T = vectorTermsCache.get(id);
+  if (!T) { T = E.pathTerms(paths.ox, paths.oy, 80); vectorTermsCache.set(id, T); }
+  return T;
+}
 function picObject(m) {                // a client's picture description -> what the engine's picTerms expects
   const held = m && typeof m.id === 'string' && pics.get(m.id);
   if (!held) throw new HttpError(410, 'picture ' + (m && m.id) + ' is not on the server');
-  return { src: held.src, name: String(m.name || '').slice(0, 60), thr: num(m.thr, 5, 95, 30), detail: Math.round(num(m.detail, 96, 4096, 320)),
-    match: !!m.match, lines: !!held.lines, key: '', T: null };
+  const thr = num(m.thr, 5, 95, 30), detail = Math.round(num(m.detail, 96, 4096, 320));
+  // a vector drawing comes with its terms already built (the thresholds and detail do not apply to it)
+  return { src: held.src, name: String(m.name || '').slice(0, 60), thr, detail, match: !!m.match, lines: !!held.lines,
+    key: held.paths ? thr + ',' + detail : '', T: held.paths ? vectorTerms(m.id, held.paths) : null };
 }
 function picTerms(id, thr, detail) {
   const key = id + '|' + thr + '|' + detail;
@@ -470,11 +482,15 @@ async function cutoutPic(id, mode) {
 async function facePic(id, outline, sketch) {
   const held = pics.get(id);
   if (!held) throw new HttpError(410, 'picture ' + id + ' is not on the server');
-  let art;
-  try { art = await Face.faceArt(held.src, outline ? held.alpha || await subjectMask(held.src) : null, sketch); }
+  let v;
+  try { v = await Face.faceVectors(held.src, outline ? held.alpha || await subjectMask(held.src) : null, sketch); }
   catch (e) { if (e instanceof HttpError) throw e; console.error(e); throw new HttpError(501, 'the face model is not installed on this server'); }
-  if (!art) throw new HttpError(422, 'no face found in that picture');
-  return { id: await storePic(art.cv.toBuffer('image/png'), true), faces: art.faces };
+  if (!v) throw new HttpError(422, 'no face found in that picture');
+  const r1 = (a) => a.map((x) => Math.round(x * 10) / 10), paths = { ox: r1(v.ox), oy: r1(v.oy) }, json = JSON.stringify(paths);
+  const out = crypto.createHash('sha1').update(json).digest('hex').slice(0, 12);
+  fs.writeFileSync(pathFile(out), json);
+  holdPaths(out, paths);
+  return { id: out, faces: v.faces };
 }
 
 /* ---------------------------------------------------------------- saved designs */
@@ -510,7 +526,7 @@ async function saveDesign(b) {
   }
   for (const f of fs.readdirSync(path.join(DATA, 'pics'))) {
     const file = path.join(DATA, 'pics', f);
-    if (!used.has(f.replace('.lines', '')) && Date.now() - fs.statSync(file).mtimeMs > 14 * 864e5) fs.rmSync(file, { force: true });
+    if (!used.has(f.replace(/\.(lines|paths)$/, '')) && Date.now() - fs.statSync(file).mtimeMs > 14 * 864e5) fs.rmSync(file, { force: true });
   }
 })();
 
