@@ -369,8 +369,10 @@ body:not(.open) .fab { display: block; }
             <button type="button" class="btn wide" id="sv-fetch">Fetch and trace</button>
             <label class="field"><span>Colours</span><input type="text" class="text" id="sv-k" inputmode="numeric" value="4"></label>
             <button type="button" class="btn" id="sv-split">Split into colours</button>
+            <button type="button" class="btn" id="sv-cut">Cut out subject</button>
+            <button type="button" class="btn" id="sv-sil">Subject outline</button>
           </div>
-          <p class="note">The server downloads the address itself, so it can reach other homelab services. Split keeps the current picture's colours as separate layers, one outline each (the background colour is dropped).</p>
+          <p class="note">The server downloads the address itself, so it can reach other homelab services. Split keeps the current picture's colours as separate layers, one outline each (the background colour is dropped). Cut out subject and Subject outline use a small neural network (U2-Net) to find the main subject, so the trace follows it and ignores the background.</p>
         </div>
       </section>
 
@@ -1617,6 +1619,16 @@ function initServerUI() {
     layersStale = true;
     syncUI(); geometryChanged(true);
   }));
+  for (const [btn, mode] of [['sv-cut', 'cutout'], ['sv-sil', 'silhouette']]) {
+    $(btn).addEventListener('click', () => svBusy($(btn), async () => {
+      if (!P.pic) { alert('Open a picture first (Image mode).'); return; }
+      await svReady();
+      const r = await (await svPost('pic/cutout?id=' + P.pic.id + '&mode=' + mode, {})).json(), old = P.pic;
+      P.pic = { file: null, id: r.id, name: old.name + (mode === 'cutout' ? ' cutout' : ' outline'), thr: old.thr, detail: old.detail, match: mode === 'cutout' && old.match, key: '', T: null, job: '' };
+      syncUI(); geometryChanged(true);
+      paused = false;
+    }));
+  }
   svRefreshDesigns().catch(() => {});
   svRefreshJobs().catch(() => {});
   const d = new URLSearchParams(location.search).get('d');

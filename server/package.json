@@ -4,6 +4,12 @@
   "private": true,
   "description": "Homelab build of Spirograph: tracing and exports run on the server",
   "license": "MIT",
-  "scripts": { "start": "node server.js", "test": "node test.js" },
-  "dependencies": { "@napi-rs/canvas": "^0.1.80" }
+  "scripts": {
+    "start": "node server.js",
+    "test": "node test.js"
+  },
+  "dependencies": {
+    "@napi-rs/canvas": "^0.1.80",
+    "onnxruntime-node": "^1.30.0"
+  }
 }

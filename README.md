@@ -143,6 +143,7 @@ Beyond the exports, the server adds:
 - **Background renders:** MP4 up to 4K at 60 fps, a PDF on an A4/A3/A2/Letter page (optional plain CMYK) and a plotter SVG in millimetres with one path per layer. They queue at low priority, wait in the panel, and can push a notification (ntfy and/or a webhook).
 - **Batch of names:** a list of names becomes a zip of PNG, JPG, SVG, PDF or plotter SVG files.
 - **Picture tools:** fetch a picture from a web address (the server makes the request) and split a picture into 2 to 8 colour layers, one traced outline each.
+- **Subject cut-out:** Cut out subject and Subject outline run a small neural network (U2-Net, Apache-2.0, 4.6 MB, run with onnxruntime) on a picture to find its main subject, then trace that instead of the whole frame. The Docker build downloads the model; for a local run put `u2netp.onnx` in `server/models/` or set `MODEL_PATH`.
 - **API:** everything above is plain HTTP. `POST api/export`, `api/jobs` (`kind: "batch"` for names), `api/designs`, `api/fetch`, `api/pic/split`; `GET api/jobs` lists jobs and `api/jobs/ID/file` downloads one.
 
 Set `LAB_PUBLIC_URL`, `LAB_NTFY_URL`, `LAB_NTFY_TOKEN`, `LAB_HA_WEBHOOK_URL` and `LAB_DATA` in `server/.env` to change where notifications go and where data lives (`../data` by default, writable by uid 1000).

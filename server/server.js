@@ -409,6 +409,51 @@ async function splitPic(id, k) {
   return out.sort((a, b) => b.share - a.share);
 }
 
+/* ---------------------------------------------------------------- subject cut-out (neural network) */
+// U2-Net (small, Apache-2.0) finds the main subject of a picture; the picture is then redrawn with only that subject
+// (or as its black silhouette), which the usual edge tracing turns into a clean outline instead of background clutter.
+const MODEL = process.env.MODEL_PATH || path.join(__dirname, 'models', 'u2netp.onnx');
+let seg = null;
+async function subjectMask(src) {
+  if (!seg) {
+    try { const ort = require('onnxruntime-node'); seg = { ort, s: await ort.InferenceSession.create(MODEL) }; }
+    catch (e) { console.error(e); throw new HttpError(501, 'the outline model is not installed on this server'); }
+  }
+  const S = 320, cv = E.createCanvas(S, S), cx = cv.getContext('2d');
+  cx.drawImage(src, 0, 0, S, S);
+  const px = cx.getImageData(0, 0, S, S).data, f = new Float32Array(3 * S * S), mean = [0.485, 0.456, 0.406], sd = [0.229, 0.224, 0.225];
+  let mx = 1e-6;
+  for (let i = 0; i < px.length; i++) if (i % 4 < 3 && px[i] > mx) mx = px[i];
+  for (let p = 0; p < S * S; p++) for (let c = 0; c < 3; c++) f[c * S * S + p] = (px[4 * p + c] / mx - mean[c]) / sd[c];
+  const out = await seg.s.run({ [seg.s.inputNames[0]]: new seg.ort.Tensor('float32', f, [1, 3, S, S]) }), d = out[seg.s.outputNames[0]].data;
+  let lo = Infinity, hi = -Infinity;
+  for (const v of d) { if (v < lo) lo = v; if (v > hi) hi = v; }
+  const mc = E.createCanvas(S, S), mx2 = mc.getContext('2d'), img = mx2.createImageData(S, S);
+  for (let p = 0; p < S * S; p++) { const v = Math.round(255 * (d[p] - lo) / (hi - lo || 1)); img.data[4 * p] = img.data[4 * p + 1] = img.data[4 * p + 2] = v; img.data[4 * p + 3] = 255; }
+  mx2.putImageData(img, 0, 0);
+  const W = src.width, H = src.height, big = E.createCanvas(W, H), bx = big.getContext('2d');
+  bx.drawImage(mc, 0, 0, W, H);                                  // smooth upscale of the mask to the picture's size
+  const m = bx.getImageData(0, 0, W, H).data, a = new Float32Array(W * H);
+  for (let p = 0; p < W * H; p++) a[p] = m[4 * p] / 255;
+  return a;
+}
+// mode 'cutout': the subject on white, in its own colours; 'silhouette': the subject in black on white.
+async function cutoutPic(id, mode) {
+  const held = pics.get(id);
+  if (!held) throw new HttpError(410, 'picture ' + id + ' is not on the server');
+  const { src } = held, W = src.width, H = src.height, a = await subjectMask(src), px = src.getContext('2d').getImageData(0, 0, W, H).data;
+  const cv = E.createCanvas(W, H), cx = cv.getContext('2d'), img = cx.createImageData(W, H);
+  for (let p = 0; p < W * H; p++) {
+    for (let c = 0; c < 3; c++) {
+      if (mode === 'silhouette') img.data[4 * p + c] = a[p] > 0.5 ? 0 : 255;
+      else { const k = Math.min(1, Math.max(0, (a[p] - 0.35) / 0.3)); img.data[4 * p + c] = Math.round(px[4 * p + c] * k + 255 * (1 - k)); }
+    }
+    img.data[4 * p + 3] = 255;
+  }
+  cx.putImageData(img, 0, 0);
+  return { id: await storePic(cv.toBuffer('image/png')) };
+}
+
 /* ---------------------------------------------------------------- saved designs */
 const DESIGN_ID = /^[0-9a-f]{8}$/, designFile = (id, ext) => path.join(DATA, 'designs', id + ext);
 // Settings as plain data again, but only the page's own keys, after cleanP has vetted them.
@@ -567,6 +612,10 @@ async function api(req, res, url) {
     const id = url.searchParams.get('id') || '', k = Math.round(num(url.searchParams.get('k'), 2, 8, 4));
     const out = await queue(async () => { await needPics({ pic: { id } }); return splitPic(id, k); });
     return json(res, 200, out);
+  }
+  if (M === 'POST' && p === '/api/pic/cutout') {
+    const id = url.searchParams.get('id') || '', mode = url.searchParams.get('mode') === 'silhouette' ? 'silhouette' : 'cutout';
+    return json(res, 200, await queue(async () => { await needPics({ pic: { id } }); return cutoutPic(id, mode); }));
   }
   if (M === 'POST' && p === '/api/fetch') {
     const j = await jbody(4e3), r = await queue(() => fetchPicture(String(j.url || '')));
