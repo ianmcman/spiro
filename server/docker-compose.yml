@@ -16,6 +16,15 @@ services:
       NTFY_URL: ${LAB_NTFY_URL:-}
       NTFY_TOKEN: ${LAB_NTFY_TOKEN:-}
       HA_WEBHOOK_URL: ${LAB_HA_WEBHOOK_URL:-}
+      # Pattern of the day by email: set DAILY_AT (HH:MM in TZ) plus an SMTP account.
+      TZ: ${LAB_TZ:-UTC}
+      DAILY_AT: ${LAB_DAILY_AT:-}
+      SMTP_HOST: ${LAB_SMTP_HOST:-}
+      SMTP_PORT: ${LAB_SMTP_PORT:-587}
+      SMTP_USER: ${LAB_SMTP_USER:-}
+      SMTP_PASS: ${LAB_SMTP_PASS:-}
+      MAIL_FROM: ${LAB_MAIL_FROM:-}
+      MAIL_TO: ${LAB_MAIL_TO:-}
     volumes:
       - ${LAB_DATA:-../data}:/data        # saved designs, pictures and finished renders; must be writable by uid 1000
     read_only: true
@@ -25,5 +34,5 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
-    mem_limit: 3g
+    mem_limit: 6g
     cpus: 4

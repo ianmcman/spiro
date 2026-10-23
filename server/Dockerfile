@@ -1,5 +1,11 @@
 # Homelab build. Context is the repo root: docker compose -f server/docker-compose.yml up -d --build
 # Debian, not Alpine: the musl canvas binary needs AVX and crashes (SIGILL) on the Westmere Xeon in arrstack.
+# InsightFace face detector and 106-point landmarks, from the buffalo_s pack (non-commercial research licence: personal use only).
+FROM node:22-slim AS faces
+RUN apt-get update && apt-get install -y --no-install-recommends unzip && rm -rf /var/lib/apt/lists/*
+ADD --checksum=sha256:d85a87f503f691807cd8bb97128bdf7a0660326cd9cd02657127fa978bab8b5e https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_s.zip /tmp/b.zip
+RUN unzip -j /tmp/b.zip det_500m.onnx 2d106det.onnx -d /models
+
 FROM node:22-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg && rm -rf /var/lib/apt/lists/*
@@ -9,6 +15,7 @@ RUN cd server && npm ci --omit=dev
 COPY server/ ./server/
 COPY site/ ./site/
 RUN mkdir -p server/models
+COPY --from=faces --chmod=644 /models/ ./server/models/
 # U2-Net (small) for "Cut out subject"; Apache-2.0
 ADD --chmod=644 --checksum=sha256:309c8469258dda742793dce0ebea8e6dd393174f89934733ecc8b14c76f4ddd8 https://github.com/danielgatis/rembg/releases/download/v0.0.0/u2netp.onnx /app/server/models/u2netp.onnx
 

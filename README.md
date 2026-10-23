@@ -144,6 +144,9 @@ Beyond the exports, the server adds:
 - **Batch of names:** a list of names becomes a zip of PNG, JPG, SVG, PDF or plotter SVG files.
 - **Picture tools:** fetch a picture from a web address (the server makes the request) and split a picture into 2 to 8 colour layers, one traced outline each.
 - **Subject cut-out:** Cut out subject and Subject outline run a small neural network (U2-Net, Apache-2.0, 4.6 MB, run with onnxruntime) on a picture to find its main subject, then trace that instead of the whole frame. The Docker build downloads the model; for a local run put `u2netp.onnx` in `server/models/` or set `MODEL_PATH`.
+- **Face drawing:** finds the faces (InsightFace SCRFD and 106-point landmarks, run with onnxruntime) and redraws the jaw, brows, eyes, nose and mouth as clean lines, optionally with the head and hair outline from the subject model. The line drawing is traced by its lines, so the circles follow a single stroke. The models are for non-commercial use; the Docker build downloads them.
+- **Bigger pictures:** Detail goes up to 4096 px and Circles up to 65000 on the server (the page stops at 768 and 16000). A 4000 px photo traces in a few seconds.
+- **Pattern of the day:** set `LAB_DAILY_AT` (for example `07:00`), `LAB_TZ` and the `LAB_SMTP_*` and `LAB_MAIL_*` variables and the server emails a seeded random design every day (PNG attached, link to open it saved in the lab). `POST api/daily/run?send=0` previews today's without sending.
 - **API:** everything above is plain HTTP. `POST api/export`, `api/jobs` (`kind: "batch"` for names), `api/designs`, `api/fetch`, `api/pic/split`; `GET api/jobs` lists jobs and `api/jobs/ID/file` downloads one.
 
 Set `LAB_PUBLIC_URL`, `LAB_NTFY_URL`, `LAB_NTFY_TOKEN`, `LAB_HA_WEBHOOK_URL` and `LAB_DATA` in `server/.env` to change where notifications go and where data lives (`../data` by default, writable by uid 1000).
