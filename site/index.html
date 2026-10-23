@@ -93,6 +93,13 @@ body:not(.open) .panel { display: none; }
 #mode { grid-template-columns: repeat(3, 1fr); }
 #mode button { padding: 0 4px; font-size: 1.2rem; }
 .wide-btn { width: 100%; }
+.swatches { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 12px; }
+.sw { position: relative; width: 30px; height: 30px; padding: 0; border: 2px solid var(--card-border); border-radius: 50%; cursor: pointer; touch-action: manipulation; }
+.sw[aria-pressed="true"] { border-color: var(--text-hi); box-shadow: 0 0 0 2px var(--bg) inset; }
+.sw input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
+.sw.rainbow { background: conic-gradient(#f92672, #fd971f, #e6db74, #a6e22e, #66d9ef, #ae81ff, #f92672); }
+.field.ink.dim, .swatches.dim { opacity: .45; }
+@media (pointer: coarse) { .sw { width: 36px; height: 36px; } }
 .pic-preview { display: block; width: 100%; aspect-ratio: 1; margin: 10px 0 6px; background: var(--bg); border: 1px solid var(--field-border); border-radius: var(--radius); }
 .row output.num { border-bottom-color: transparent; }
 .foot { margin: 23px 18px 0; font-size: 1.1rem; color: var(--text-sub); }
@@ -320,6 +327,7 @@ body:not(.open) .fab { display: block; }
           <canvas id="pic-preview" class="pic-preview hidden" aria-label="Traced outline of the image"></canvas>
           <label class="row"><span class="lab">Edge threshold</span><output class="num" id="o-picThr"></output><input type="range" id="picThr" min="5" max="95" step="1" value="30"></label>
           <label class="row"><span class="lab">Detail</span><output class="num" id="o-picDetail"></output><input type="range" id="picDetail" min="96" max="768" step="16" value="320"></label>
+          <label class="check"><input type="checkbox" id="picMatch" checked><span>Match image colours</span></label>
           <p class="note">The image's edges are traced as one line, then drawn by rotating circles. Works best on logos, silhouettes and clear outlines. The image stays in your browser.</p>
         </div>
       </section>
@@ -379,6 +387,7 @@ body:not(.open) .fab { display: block; }
         <h2 class="widget-header">Appearance</h2>
         <div class="card">
           <label class="field ink"><span>Ink</span><select id="ink"></select></label>
+          <div class="swatches" id="swatches" role="group" aria-label="Ink palette"></div>
           <label class="row" id="row-hue"><span class="lab">Colour offset</span><input type="range" id="hue" min="0" max="360" step="1"><input class="num" id="o-hue" type="text" inputmode="decimal" autocomplete="off" spellcheck="false" aria-label="Colour offset value"></label>
           <label class="row"><span class="lab">Line weight</span><input type="range" id="weight" min="0.5" max="4" step="0.1"><input class="num" id="o-weight" type="text" inputmode="decimal" autocomplete="off" spellcheck="false" aria-label="Line weight value"></label>
           <label class="row"><span class="lab">Draw speed</span><input type="range" id="speed" min="0.05" max="8" step="0.05"><input class="num" id="o-speed" type="text" inputmode="decimal" autocomplete="off" spellcheck="false" aria-label="Draw speed value"></label>
@@ -635,7 +644,7 @@ const P = {
   ring: 80, wheel: 35, pen: 80, angle: 0,
   rot: 0, ink: 'cycle', hue: 0, weight: 1.2, speed: 1, showWheels: false,
   sizing: 'pct', ringTeeth: 96, wheelTeeth: 52, text: '', circles: 4000,
-  second: false, w2side: 'outside', w2div: 3, w2speed: 1
+  second: false, w2side: 'outside', w2div: 3, w2speed: 1, color: '#66d9ef'
 };
 const DEFAULTS = Object.assign({}, P);
 // Tooth counts from the classic Spirograph kit: two inner rings (96, 105), two outer (144, 150), and the wheels.
@@ -1067,6 +1076,23 @@ function picTerms(pic) {
   const b = new Uint8Array(W * H), t = pic.thr / 100 * p99;
   for (let y = M + 2; y < H - M - 2; y++) for (let x = M + 2; x < W - M - 2; x++) b[y * W + x] = mag[y * W + x] > t ? 1 : 0;
   pic.T = maskTerms(b, W, H, { n: 1, pitch: H, size: 0, len: 80, dots: false, minBlob: Math.max(6, Math.round(pic.detail / 40)) });
+  if (pic.T) {
+    // the picture's colour at each path point (5 x 5 average), lifted to a minimum brightness so it shows on the dark canvas
+    const col = pic.T.col = new Uint8Array(pic.T.M * 3);
+    for (let j = 0; j < pic.T.M; j++) {
+      const px = Math.round(pic.T.rx[j]), py = Math.round(pic.T.ry[j]);
+      let r = 0, g2 = 0, bl2 = 0, c = 0;
+      for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) {
+        const x = px + dx, y = py + dy;
+        if (x < 0 || y < 0 || x >= W || y >= H) continue;
+        const q = (y * W + x) * 4;
+        r += d[q]; g2 += d[q + 1]; bl2 += d[q + 2]; c++;
+      }
+      r /= c || 1; g2 /= c || 1; bl2 /= c || 1;
+      const lum = 0.299 * r + 0.587 * g2 + 0.114 * bl2, f = lum < 120 ? (120 - lum) / (255 - lum) : 0;
+      col[j * 3] = r + (255 - r) * f; col[j * 3 + 1] = g2 + (255 - g2) * f; col[j * 3 + 2] = bl2 + (255 - bl2) * f;
+    }
+  }
   pic.key = key;
   return pic.T;
 }
@@ -1074,7 +1100,9 @@ function buildPic(p, w, h, maxN) {
   const T = picTerms(p.pic);
   if (!T) return buildModel(Object.assign({}, p, { pic: null }), w, h, maxN);
   if (p.pic === P.pic && w === vw) drawPicPreview(T);
-  return fourierModel(p, T, w, h, Math.min(0.9 * w / T.bw, 0.8 * h / T.bh));
+  const m = fourierModel(p, T, w, h, Math.min(0.9 * w / T.bw, 0.8 * h / T.bh));
+  m.col = T.col;
+  return m;
 }
 // Small outline of the traced path, so threshold and detail can be tuned before drawing.
 function drawPicPreview(T) {
@@ -1142,7 +1170,7 @@ function strokeChunk(ctx, m, i0, i1) {
   ctx.moveTo(xs[i0], ys[i0]);
   const up = m.up;
   for (let i = i0 + 1; i <= i1; i++) if (up && up[i]) ctx.moveTo(xs[i], ys[i]); else ctx.lineTo(xs[i], ys[i]);
-  const c = inkRGB(m.p, i0 / m.N);
+  const c = matching(m) ? picColor(m, i0, i1) : inkRGB(m.p, i0 / m.N);
   ctx.strokeStyle = 'rgba(' + c[0] + ',' + c[1] + ',' + c[2] + ',' + INK_ALPHA + ')';
   ctx.lineWidth = m.p.weight / (ctx.z || 1);
   ctx.stroke();
@@ -1169,12 +1197,19 @@ function prepCtx(ctx, scale) {
 // Or one solid pen per layer, as with a real kit.
 const INKS = {
   cycle: null, pink: [249, 38, 114], orange: [253, 151, 31], yellow: [230, 219, 116], green: [166, 226, 46],
-  cyan: [102, 217, 239], purple: [174, 129, 255], white: [248, 248, 242]
+  cyan: [102, 217, 239], purple: [174, 129, 255], white: [248, 248, 242], custom: null   // custom: the colour picker's colour
 };
 const CYCLE = ['pink', 'orange', 'yellow', 'green', 'cyan', 'purple'].map((k) => INKS[k]);
 const INK_ALPHA = 0.85;
+// Picture mode with colour matching: the line takes the picture's colours (sampled when it was traced).
+const matching = (m) => !!(m.col && m.p.pic && m.p.pic.match);
+function picColor(m, i0, i1) {
+  const j = 3 * Math.floor(((i0 + i1) >> 1) * m.T.M / m.N);
+  return [m.col[j], m.col[j + 1], m.col[j + 2]];
+}
 // t = position along the pattern, 0..1
 function inkRGB(p, t) {
+  if (p.ink === 'custom') return [1, 3, 5].map((k) => parseInt(p.color.slice(k, k + 2), 16));
   if (p.ink !== 'cycle' && INKS[p.ink]) return INKS[p.ink];
   t += p.hue / 360;
   const x = (t - Math.floor(t)) * CYCLE.length, i = x | 0, f = x - i, a = CYCLE[i], b = CYCLE[(i + 1) % CYCLE.length];
@@ -1395,16 +1430,22 @@ function syncUI() {
     : 'Epicycloid type. Wheel rolls around the outside of the ring.';
   $('row-angle').classList.toggle('dim', P.wheelShape === 'circle');
   $('ink').value = P.ink;
+  document.querySelectorAll('#swatches .sw').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.ink === P.ink)));
+  $('inkColor').value = P.color;
+  document.querySelector('#swatches [data-ink=custom]').style.background = P.ink === 'custom' ? P.color : '';
+  const matched = !!(P.pic && P.pic.match);
+  document.querySelector('.field.ink').classList.toggle('dim', matched);
+  $('swatches').classList.toggle('dim', matched);
   document.querySelectorAll('#sizing button').forEach((b) => b.setAttribute('aria-checked', String(b.dataset.sizing === P.sizing)));
   $('teethRow').classList.toggle('hidden', P.sizing !== 'teeth');
   $('row-wheel').classList.toggle('hidden', P.sizing === 'teeth');
   $('ringTeeth').value = P.ringTeeth;
   $('wheelTeeth').value = P.wheelTeeth;
-  $('row-hue').classList.toggle('dim', P.ink !== 'cycle');
+  $('row-hue').classList.toggle('dim', P.ink !== 'cycle' || matched);
   if (P.text.trim()) setMode('name');
   else if (P.pic) setMode('image');
   if (P.pic) {
-    $('picThr').value = P.pic.thr; $('picDetail').value = P.pic.detail;
+    $('picThr').value = P.pic.thr; $('picDetail').value = P.pic.detail; $('picMatch').checked = P.pic.match;
     $('o-picThr').value = P.pic.thr; $('o-picDetail').value = P.pic.detail;
   }
   $('pic-preview').classList.toggle('hidden', !P.pic);
@@ -1522,7 +1563,7 @@ function paintGallery() {
 
 /* ------------------------------------------------------------- URL state */
 // Settings live in the URL hash, so a reload keeps them and a copied link reproduces the pattern.
-const KEYS = ['ringShape', 'wheelShape', 'side', 'ring', 'wheel', 'pen', 'angle', 'rot', 'ink', 'hue', 'weight', 'speed', 'showWheels', 'sizing', 'ringTeeth', 'wheelTeeth', 'text', 'circles', 'second', 'w2side', 'w2div', 'w2speed'];
+const KEYS = ['ringShape', 'wheelShape', 'side', 'ring', 'wheel', 'pen', 'angle', 'rot', 'ink', 'hue', 'weight', 'speed', 'showWheels', 'sizing', 'ringTeeth', 'wheelTeeth', 'text', 'circles', 'second', 'w2side', 'w2div', 'w2speed', 'color'];
 // Validated copy of settings from untrusted text (URL). get(k) returns the string for key k, or null.
 function applyParams(t, get, keys) {
   for (const k of keys) {
@@ -1533,6 +1574,7 @@ function applyParams(t, get, keys) {
     else if (k === 'sizing') { if (v === 'pct' || v === 'teeth') t.sizing = v; }
     else if (k === 'ink') { if (Object.prototype.hasOwnProperty.call(INKS, v)) t.ink = v; }
     else if (k === 'showWheels' || k === 'second') t[k] = v === '1';
+    else if (k === 'color') { if (/^#[0-9a-f]{6}$/i.test(v)) t.color = v.toLowerCase(); }
     else if (k === 'w2side') { if (v === 'inside' || v === 'outside') t.w2side = v; }
     else if (k === 'text') t.text = v.slice(0, MAX_TEXT);
     else if (k === 'circles') { const n = parseInt(v, 10); if (n >= 2) t.circles = Math.min(MAX_CIRCLES, n); }
@@ -1547,7 +1589,7 @@ function applyParams(t, get, keys) {
   return t;
 }
 // Kept layers go in one 'layers' key: layers separated by '~', fields by ',' in LAYER_KEYS order.
-const LAYER_KEYS = ['ringShape', 'wheelShape', 'side', 'ring', 'wheel', 'pen', 'angle', 'rot', 'ink', 'hue', 'weight', 'sizing', 'ringTeeth', 'wheelTeeth', 'text', 'circles', 'second', 'w2side', 'w2div', 'w2speed'];
+const LAYER_KEYS = ['ringShape', 'wheelShape', 'side', 'ring', 'wheel', 'pen', 'angle', 'rot', 'ink', 'hue', 'weight', 'sizing', 'ringTeeth', 'wheelTeeth', 'text', 'circles', 'second', 'w2side', 'w2div', 'w2speed', 'color'];
 const decText = (t) => { try { return decodeURIComponent(t); } catch (_) { return ''; } };
 const MAX_LAYERS = 24;
 // Compact links: "#p=<base64url>" holds a varint bitmask of the settings that differ from the defaults, then their
@@ -1562,6 +1604,7 @@ function pack(out, p, keys, use = () => true) {
   for (const k of set) {
     const v = p[k];
     if (k === 'text') { const t = new TextEncoder().encode(v); varint(out, t.length); for (const b of t) out.push(b); }
+    else if (k === 'color') varint(out, parseInt(v.slice(1), 16));
     else if (ENUMS[k] || LISTS[k]) varint(out, Math.max(0, (ENUMS[k] || LISTS[k]).indexOf(v)));
     else varint(out, Math.round(+v * 100));      // booleans too: 0 or 100
   }
@@ -1574,6 +1617,7 @@ function unpack(r, keys) {
     if (!(mask >> i & 1)) return;
     const n = get();
     if (k === 'text') { if (r.i + n > r.b.length) throw 0; o[k] = new TextDecoder().decode(r.b.subarray(r.i, r.i += n)); }
+    else if (k === 'color') o[k] = '#' + n.toString(16).padStart(6, '0');
     else if (ENUMS[k] || LISTS[k]) o[k] = String((ENUMS[k] || LISTS[k])[n]);
     else if (k === 'showWheels' || k === 'second') o[k] = n ? '1' : '0';
     else o[k] = String(n / 100);
@@ -1605,7 +1649,7 @@ function loadState() {
 }
 function stateHash() {
   // Leave out settings the current mode doesn't use.
-  const named = !!P.text || !!P.pic, skip = (k) => named ? !['text', 'circles', 'ink', 'hue', 'weight', 'speed', 'showWheels'].includes(k) : k === 'text' || k === 'circles' || (/^w2/.test(k) && !P.second);
+  const named = !!P.text || !!P.pic, skip = (k) => named ? !['text', 'circles', 'ink', 'color', 'hue', 'weight', 'speed', 'showWheels'].includes(k) : k === 'text' || k === 'circles' || (/^w2/.test(k) && !P.second);
   const out = [];
   pack(out, P, KEYS, (k) => !skip(k));
   const kept = layers.filter((l) => !l.p.pic);                     // a picture can't travel in a link
@@ -1680,7 +1724,7 @@ function loadPic(file) {
       c.fillStyle = '#fff'; c.fillRect(0, 0, src.width, src.height);        // transparent areas read as white
       c.drawImage(img, 0, 0, src.width, src.height);
       if (P.text) { lastText = P.text; P.text = ''; }
-      P.pic = { src, name: file.name.replace(/\.[^.]*$/, ''), thr: parseFloat($('picThr').value), detail: parseFloat($('picDetail').value), key: '', T: null };
+      P.pic = { src, name: file.name.replace(/\.[^.]*$/, ''), thr: parseFloat($('picThr').value), detail: parseFloat($('picDetail').value), match: $('picMatch').checked, key: '', T: null };
       setMode('image');
       syncUI();
       geometryChanged(true);
@@ -1725,6 +1769,23 @@ function init() {
     $('ink').appendChild(o);
   }
   $('ink').addEventListener('change', () => { P.ink = $('ink').value; syncUI(); needRepaint = true; schedule(); });
+  // palette: one swatch per ink, the colour cycle, and a custom colour picker
+  const pick = (name) => { P.ink = name; syncUI(); needRepaint = true; schedule(); };
+  for (const name in INKS) {
+    if (name === 'custom') continue;
+    const b = document.createElement('button');
+    b.type = 'button'; b.className = 'sw' + (name === 'cycle' ? ' rainbow' : ''); b.dataset.ink = name;
+    b.setAttribute('aria-label', name === 'cycle' ? 'Monokai cycle' : name);
+    if (INKS[name]) b.style.background = 'rgb(' + INKS[name].join(',') + ')';
+    b.addEventListener('click', () => pick(name));
+    $('swatches').appendChild(b);
+  }
+  const cu = document.createElement('label');
+  cu.className = 'sw rainbow'; cu.dataset.ink = 'custom'; cu.title = 'Custom colour';
+  cu.innerHTML = '<input type="color" id="inkColor" aria-label="Custom ink colour">';
+  $('swatches').appendChild(cu);
+  $('inkColor').addEventListener('input', () => { P.color = $('inkColor').value; P.ink = 'custom'; syncUI(); needRepaint = true; schedule(); });
+  $('picMatch').addEventListener('change', () => { if (P.pic) { P.pic.match = $('picMatch').checked; syncUI(); needRepaint = true; schedule(); } });
   for (const sel of [$('ringShape'), $('wheelShape')]) {
     for (const name of SHAPES) {
       const o = document.createElement('option');
@@ -2267,9 +2328,9 @@ function saveSVG() {
   const out = [];
   for (const m of layers.concat([model])) {
     fill(m, m.N);
-    const step = m.p.ink === 'cycle' ? Math.ceil(m.N / 90) : m.N;
+    const step = matching(m) ? Math.ceil(m.N / 400) : m.p.ink === 'cycle' ? Math.ceil(m.N / 90) : m.N;
     for (let i = 0; i < m.N; i += step) {
-      const e = Math.min(m.N, i + step), c = inkRGB(m.p, i / m.N);
+      const e = Math.min(m.N, i + step), c = matching(m) ? picColor(m, i, e) : inkRGB(m.p, i / m.N);
       let lx = m.xs[i], ly = m.ys[i], d = 'M' + lx.toFixed(1) + ' ' + ly.toFixed(1);
       for (let j = i + 1; j <= e; j++) {
         const x = m.xs[j], y = m.ys[j];

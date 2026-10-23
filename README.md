@@ -28,7 +28,7 @@ One HTML file, no dependencies, no build step, no tracking, no server-side state
 - **Second wheel:** ride a smaller wheel on the rolling wheel, outside or inside, with its own size (1/2 to 1/12 of the wheel) and orbit speed (1x to 12x). The pen moves onto the second wheel. This gives orbiting-lobe patterns a normal kit can't make. Fit to screen shrinks the ring so the pen stays in view.
 - **Pen radius** from 0 to 150% of the wheel, so the pen can sit inside the wheel, on its edge, or beyond it.
 - **Layers:** Keep layer freezes the current pattern and the next one draws on top. Undo layer removes the last. Rotation turns the whole pattern for rotated copies across layers.
-- **Ink:** one solid Monokai colour per layer, or a colour cycle with an adjustable hue offset. Line weight 0.5 to 4.
+- **Ink:** a palette of swatches (the six Monokai colours, white and the colour cycle) plus a custom colour picker, one per layer. The cycle has an adjustable hue offset. Line weight 0.5 to 4.
 - **Gallery of 15 presets,** from the classic 96/52 to second-wheel patterns. Picking one draws it.
 - **Shuffle** picks a random combination of shapes, sizes, pen and colour, including long-running patterns and (one time in five) a second wheel.
 - **Hands-on drawing:** drag around the canvas to roll the wheel by hand. Drag backwards to erase.
@@ -48,6 +48,7 @@ Upload a picture and its edges are traced as one line, then drawn by the same ch
 
 - Works best on logos, silhouettes, icons, signatures and clear outlines; busy photos give a tangle.
 - **Edge threshold** sets how strong an edge has to be, and **Detail** sets the resolution of the trace (96 to 768 px). A small outline preview shows the traced path before you draw.
+- **Match image colours** (on by default) colours the line with the picture's own colours, lifted to a minimum brightness so dark areas show on the dark canvas. Turn it off to use the ink palette instead. SVG, PNG, GIF and video all keep the matched colours.
 - Everything runs in the browser: the image is never uploaded.
 - A picture can't be carried in a share link, so Copy link restores the settings but not the image. Exports work as usual.
 
