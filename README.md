@@ -39,7 +39,7 @@ Type a name and press Play. A chain of rotating circles (a Fourier series of the
 
 - Up to 80 characters.
 - Long text wraps onto several lines on portrait screens, sized to the screen.
-- The Circles slider sets how many circles draw the text, from 2 to 4000: a rough sketch at the low end, sharp letters at the high end.
+- The Circles slider sets how many circles draw the text, from 2 to 16000 (up to what the text or picture has): a rough sketch at the low end, sharp letters at the high end.
 - Wheels shows the whole chain of circles and arms while it writes.
 
 ### Image mode
@@ -47,7 +47,7 @@ Type a name and press Play. A chain of rotating circles (a Fourier series of the
 Upload a picture and its edges are traced as one line, then drawn by the same chain of rotating circles.
 
 - Works best on logos, silhouettes, icons, signatures and clear outlines; busy photos give a tangle.
-- **Edge threshold** sets how strong an edge has to be, and **Detail** sets the resolution of the trace (96 to 512 px). A small outline preview shows the traced path before you draw.
+- **Edge threshold** sets how strong an edge has to be, and **Detail** sets the resolution of the trace (96 to 768 px). A small outline preview shows the traced path before you draw.
 - Everything runs in the browser: the image is never uploaded.
 - A picture can't be carried in a share link, so Copy link restores the settings but not the image. Exports work as usual.
 

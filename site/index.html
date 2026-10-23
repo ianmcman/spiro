@@ -319,7 +319,7 @@ body:not(.open) .fab { display: block; }
           <input type="file" id="pic-file" accept="image/*" hidden>
           <canvas id="pic-preview" class="pic-preview hidden" aria-label="Traced outline of the image"></canvas>
           <label class="row"><span class="lab">Edge threshold</span><output class="num" id="o-picThr"></output><input type="range" id="picThr" min="5" max="95" step="1" value="30"></label>
-          <label class="row"><span class="lab">Detail</span><output class="num" id="o-picDetail"></output><input type="range" id="picDetail" min="96" max="512" step="16" value="320"></label>
+          <label class="row"><span class="lab">Detail</span><output class="num" id="o-picDetail"></output><input type="range" id="picDetail" min="96" max="768" step="16" value="320"></label>
           <p class="note">The image's edges are traced as one line, then drawn by rotating circles. Works best on logos, silhouettes and clear outlines. The image stays in your browser.</p>
         </div>
       </section>
@@ -833,7 +833,7 @@ function fft(re, im, sign) {
 // Rasterised at a size that depends only on the text, so a name looks the same on any screen.
 const MAX_TEXT = 80;
 // Resampled path points (FFT length, powers of 2) and drawn samples: long text has more path to describe.
-const nameM = (len) => (len <= 24 ? 4096 : len <= 48 ? 8192 : 16384);
+const nameM = (len) => (len <= 24 ? 8192 : len <= 48 ? 16384 : 32768);
 const nameN = (M) => Math.max(16384, 2 * M);
 const nameCache = new Map();
 // Break text at spaces into n lines with the longest as short as it can be (words are never split).
@@ -1002,7 +1002,7 @@ function maskTerms(b, W, H, o) {
     up[j] = Math.hypot(ox[k1] - ox[k], oy[k1] - oy[k]) > 3 ? 1 : 0;
   }
   // Fourier coefficients for frequencies -K..K; the DC term (the centroid) anchors the chain and is not a circle.
-  const K = Math.max(500, Math.min(NAME_M / 4, len * 100)), fr = [], cr = [], ci = [];
+  const K = Math.max(500, Math.min(NAME_M / 4, len * 250)), fr = [], cr = [], ci = [];
   const fre = Float64Array.from(rx), fim = Float64Array.from(ry);
   fft(fre, fim, -1);
   const c0r = fre[0] / NAME_M, c0i = fim[0] / NAME_M;
@@ -1023,9 +1023,11 @@ function maskTerms(b, W, H, o) {
 
 // Same shape as a spirograph model where the rest of the app looks (xs, ys, N, cx, cy, dir, clo.k),
 // plus up[i]: the segment arriving at sample i is pen-up.
-// Circles slider: 0..100 on a log scale from 2 to 4000 circles, so the low counts get most of the travel.
-const circlesOf = (v) => Math.round(2 * Math.pow(2000, v / 100));
-const sliderOf = (n) => Math.round(100 * Math.log(n / 2) / Math.log(2000));
+// Circles slider: 0..100 on a log scale from 2 to MAX_CIRCLES circles, so the low counts get most of the travel.
+// (A short name has fewer terms than the slider's top; the readout shows how many are in use.)
+const MAX_CIRCLES = 16000;
+const circlesOf = (v) => Math.round(2 * Math.pow(MAX_CIRCLES / 2, v / 100));
+const sliderOf = (n) => Math.round(100 * Math.log(n / 2) / Math.log(MAX_CIRCLES / 2));
 
 function buildName(p, w, h, maxN) {
   const lines = nameLines(p.text.trim(), w, h), T = nameTerms(lines);
@@ -1533,7 +1535,7 @@ function applyParams(t, get, keys) {
     else if (k === 'showWheels' || k === 'second') t[k] = v === '1';
     else if (k === 'w2side') { if (v === 'inside' || v === 'outside') t.w2side = v; }
     else if (k === 'text') t.text = v.slice(0, MAX_TEXT);
-    else if (k === 'circles') { const n = parseInt(v, 10); if (n >= 2) t.circles = Math.min(4000, n); }
+    else if (k === 'circles') { const n = parseInt(v, 10); if (n >= 2) t.circles = Math.min(MAX_CIRCLES, n); }
     else if (k === 'ringTeeth' || k === 'wheelTeeth') {
       const n = parseInt(v, 10);
       if ((k === 'ringTeeth' ? RING_TEETH : WHEEL_TEETH).includes(n)) t[k] = n;
@@ -1794,7 +1796,7 @@ function init() {
       const v = parseFloat(o.value.replace(',', '.'));
       if (!cancel && isFinite(v) && v !== raw()) {
         if (id === 'circles') {
-          P.circles = Math.round(Math.min(4000, Math.max(2, v)));
+          P.circles = Math.round(Math.min(MAX_CIRCLES, Math.max(2, v)));
           range.value = sliderOf(P.circles);
           needCircles = true;
           schedule();
