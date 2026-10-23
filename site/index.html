@@ -373,8 +373,9 @@ body:not(.open) .fab { display: block; }
             <button type="button" class="btn" id="sv-sil">Subject outline</button>
             <button type="button" class="btn" id="sv-face">Face drawing</button>
             <label class="check"><input type="checkbox" id="sv-faceout" checked><span>with head outline</span></label>
+            <label class="check"><input type="checkbox" id="sv-facephoto" checked><span>use the photo's edges (a sketch; off gives a plain line drawing)</span></label>
           </div>
-          <p class="note">The server downloads the address itself, so it can reach other homelab services. Split keeps the current picture's colours as separate layers, one outline each (the background colour is dropped). Cut out subject and Subject outline use a small neural network (U2-Net) to find the main subject, so the trace follows it and ignores the background. Face drawing finds the faces (InsightFace models) and draws their jaw, brows, eyes, nose and mouth as lines, with the head and hair outline if ticked. For big pictures, raise Detail on the Image tab up to 4096 and Circles up to 65000; tracing a large photo can take a minute.</p>
+          <p class="note">The server downloads the address itself, so it can reach other homelab services. Split keeps the current picture's colours as separate layers, one outline each (the background colour is dropped). Cut out subject and Subject outline use a small neural network (U2-Net) to find the main subject, so the trace follows it and ignores the background. Face drawing finds the faces (InsightFace models). The sketch style keeps the photo's own edges (hair, lids, shading) inside the head outline and adds clean brows, eyes and mouth; the plain style draws only the jaw, brows, eyes, nose and mouth as lines. For big pictures, raise Detail on the Image tab up to 4096 and Circles up to 65000; tracing a large photo can take a minute.</p>
         </div>
       </section>
 
@@ -1634,7 +1635,7 @@ function initServerUI() {
   $('sv-face').addEventListener('click', () => svBusy($('sv-face'), async () => {
     if (!P.pic) { alert('Open a picture first (Image mode).'); return; }
     await svReady();
-    const r = await (await svPost('pic/face?id=' + P.pic.id + '&outline=' + ($('sv-faceout').checked ? 1 : 0), {})).json(), old = P.pic;
+    const r = await (await svPost('pic/face?id=' + P.pic.id + '&outline=' + ($('sv-faceout').checked ? 1 : 0) + '&sketch=' + ($('sv-facephoto').checked ? 1 : 0), {})).json(), old = P.pic;
     P.pic = { file: null, id: r.id, name: old.name + ' face', thr: old.thr, detail: old.detail, match: false, key: '', T: null, job: '' };
     syncUI(); geometryChanged(true);
     paused = false;

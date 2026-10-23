@@ -85,7 +85,7 @@ function curve(c, pts, closed) {
   c.stroke();
 }
 // Black lines on white, cropped around the faces (long side 640). mask (optional): subject mask over src, drawn as an outline.
-async function faceArt(src, mask) {
+async function faceArt(src, mask, sketch = false) {
   let boxes = await detect(src);
   if (!boxes.length) return null;
   boxes = boxes.slice(0, 6);
@@ -109,17 +109,40 @@ async function faceArt(src, mask) {
       }
     }
   }
+  if (sketch) {                                                     // the photo's own edges (hair, lids, shading), inside the subject or around the face
+    const g = E.createCanvas(cw, ch), gx = g.getContext('2d', { willReadFrequently: true });
+    gx.filter = 'grayscale(1) blur(1.6px)';
+    gx.drawImage(src, rx0, ry0, rw, rh, 0, 0, cw, ch);
+    const d = gx.getImageData(0, 0, cw, ch).data, mag = new Float32Array(cw * ch), inside = new Uint8Array(cw * ch), W = src.width;
+    for (let y = 0; y < ch; y++) for (let x = 0; x < cw; x++) {
+      const sx = Math.min(src.width - 1, Math.max(0, Math.round(rx0 + x / k))), sy = Math.min(src.height - 1, Math.max(0, Math.round(ry0 + y / k)));
+      if (mask) inside[y * cw + x] = mask[sy * W + sx] > 0.5 ? 1 : 0;
+      else { const ex = (x / k + rx0 - (x0 + x1) / 2) / (fw * 0.85), ey = (y / k + ry0 - (y0 + y1) / 2) / (fh * 0.85); inside[y * cw + x] = ex * ex + ey * ey < 1 ? 1 : 0; }
+    }
+    let max = 1e-6;
+    for (let y = 1; y < ch - 1; y++) for (let x = 1; x < cw - 1; x++) {
+      const i = y * cw + x, v = (j) => d[4 * j];
+      const sx = v(i - cw + 1) + 2 * v(i + 1) + v(i + cw + 1) - v(i - cw - 1) - 2 * v(i - 1) - v(i + cw - 1), sy = v(i + cw - 1) + 2 * v(i + cw) + v(i + cw + 1) - v(i - cw - 1) - 2 * v(i - cw) - v(i - cw + 1);
+      mag[i] = Math.hypot(sx, sy);
+      if (inside[i] && mag[i] > max) max = mag[i];
+    }
+    const vals = [];
+    for (let i = 0; i < mag.length; i += 3) if (inside[i]) vals.push(mag[i]);
+    vals.sort((a, b) => a - b);
+    const t = vals.length ? vals[Math.floor(vals.length * 0.86)] : max;     // the strongest 14% of the edges
+    c.fillStyle = '#000';
+    for (let y = 2; y < ch - 2; y++) for (let x = 2; x < cw - 2; x++) { const i = y * cw + x; if (inside[i] && mag[i] > t) c.fillRect(x, y, 1, 1); }
+  }
   for (const L of all) {
     const P = (ids) => ids.map((i) => [X(L[i][0]), Y(L[i][1])]);
-    curve(c, P(JAW), false);
+    if (!sketch) curve(c, P(JAW), false);                              // with the photo's edges the real jaw is already there
     for (const [a, b] of [[43, 51], [97, 105]]) curve(c, byAngle(P(range(a, b))), true);          // brows
     for (const [a, b] of [[33, 42], [87, 96]]) {                                                  // eyes, with an iris
       const eye = P(range(a, b)), [ex, ey] = centre(eye), w2 = Math.max(...eye.map((p) => p[0])) - Math.min(...eye.map((p) => p[0]));
       curve(c, byAngle(eye), true);
       c.beginPath(); c.arc(ex, ey, w2 * 0.16, 0, Math.PI * 2); c.stroke();
     }
-    curve(c, P([76, 77, 78, 79, 80, 85, 84, 83, 82]), false);                                     // nose
-    curve(c, P([73, 74]), false);
+    if (!sketch) { curve(c, P([76, 77, 78, 79, 80, 85, 84, 83, 82]), false); curve(c, P([73, 74]), false); }   // nose
     const mouth = P(range(52, 71)), outer = hull(mouth), inner = mouth.filter((p) => !outer.includes(p));
     curve(c, outer, true);
     if (inner.length > 3) curve(c, byAngle(inner), true);

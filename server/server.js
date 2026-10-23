@@ -462,11 +462,11 @@ async function cutoutPic(id, mode) {
 }
 
 // A line drawing of the faces in a picture (optionally with the subject's outline), as a new picture to trace.
-async function facePic(id, outline) {
+async function facePic(id, outline, sketch) {
   const held = pics.get(id);
   if (!held) throw new HttpError(410, 'picture ' + id + ' is not on the server');
   let art;
-  try { art = await Face.faceArt(held.src, outline ? await subjectMask(held.src) : null); }
+  try { art = await Face.faceArt(held.src, outline ? await subjectMask(held.src) : null, sketch); }
   catch (e) { if (e instanceof HttpError) throw e; console.error(e); throw new HttpError(501, 'the face model is not installed on this server'); }
   if (!art) throw new HttpError(422, 'no face found in that picture');
   return { id: await storePic(art.cv.toBuffer('image/png'), true), faces: art.faces };
@@ -690,8 +690,8 @@ async function api(req, res, url) {
     return json(res, 200, await queue(async () => { await needPics({ pic: { id } }); return cutoutPic(id, mode); }));
   }
   if (M === 'POST' && p === '/api/pic/face') {
-    const id = url.searchParams.get('id') || '', outline = url.searchParams.get('outline') === '1';
-    return json(res, 200, await queue(async () => { await needPics({ pic: { id } }); return facePic(id, outline); }));
+    const id = url.searchParams.get('id') || '', outline = url.searchParams.get('outline') === '1', sketch = url.searchParams.get('sketch') === '1';
+    return json(res, 200, await queue(async () => { await needPics({ pic: { id } }); return facePic(id, outline, sketch); }));
   }
   if (M === 'POST' && p === '/api/daily/run') {                       // ?date=YYYY-MM-DD, ?send=0 for a preview without email
     const date = url.searchParams.get('date') || today(process.env.TZ || '');
