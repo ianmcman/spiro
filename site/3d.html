@@ -3,10 +3,13 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="robots" content="noindex, nofollow">
-<title>3D Spirograph (lab)</title>
+<meta name="theme-color" content="#282923">
+<title>3D Spirograph: draw spirograph curves in 3D, free</title>
+<meta name="description" content="Free 3D spirograph. Chain turning arms in 3D, orbit the curve, and save a PNG, a printable STL or a turntable video. No sign-up.">
+<link rel="canonical" href="https://spiro.ianmcmanus.net/3d">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <style>
-@font-face { font-family: 'JetBrains Mono'; font-style: normal; font-weight: 400; font-display: swap; src: url('JetBrainsMono-Regular.woff2') format('woff2'); }
+@font-face { font-family: 'JetBrains Mono'; font-style: normal; font-weight: 400; font-display: swap; src: url('/JetBrainsMono-Regular.woff2') format('woff2'); }
 :root {
   --bg: hsl(70, 8%, 15%);
   --card: hsl(70, 8%, 16%);
@@ -93,13 +96,12 @@ a:hover { color: var(--primary); }
 .panel-head a { font-size: 1.3rem; }
 @media (max-width: 760px) { .app { flex-direction: column; } #view { flex: 0 0 45%; min-height: 0; } .panel { width: 100%; flex: 1; border-left: 0; border-top: 1px solid var(--separator); } .btn, .check { min-height: 44px; } }
 </style>
-<script type="importmap">{ "imports": { "three": "/vendor/three/build/three.module.js", "three/addons/": "/vendor/three/examples/jsm/" } }</script>
 </head>
 <body>
 <div class="app">
   <div id="view"></div>
   <aside class="panel">
-    <div class="panel-head"><h1>3D Spirograph</h1><a href="/">Back to the lab</a></div>
+    <div class="panel-head"><h1>3D Spirograph</h1><a href="/">Back to the spirograph</a></div>
     <div class="panel-body">
       <div id="arms"></div>
       <div class="actions" style="margin-top:10px"><button type="button" class="btn" id="addarm">Add arm</button><button type="button" class="btn" id="delarm">Remove arm</button></div>
@@ -140,9 +142,8 @@ window.addEventListener('error', (e) => { const m = document.getElementById('msg
 window.addEventListener('unhandledrejection', (e) => { const m = document.getElementById('msg'); if (m) m.textContent = 'Error: ' + (e.reason && e.reason.message || e.reason); });
 </script>
 <script type="module">
-import * as THREE from 'three';
-import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { STLExporter } from 'three/addons/exporters/STLExporter.js';
+import * as THREE from '/vendor/three-lab.js';
+import { OrbitControls, STLExporter } from '/vendor/three-lab.js';
 
 const $ = (id) => document.getElementById(id);
 const DEF = {

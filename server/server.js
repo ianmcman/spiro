@@ -827,12 +827,7 @@ const server = http.createServer(async (req, res) => {
     let name = decodeURIComponent(url.pathname);
     if (name === '/' || name === '/index.html') return send(res, 200, PAGE(), MIME['.html']);
     if (name === '/robots.txt') return send(res, 200, 'User-agent: *\nDisallow: /\n');
-    if (name === '/3d') return send(res, 200, fs.readFileSync(path.join(__dirname, 'lab3d.html')), MIME['.html']);
-    if (name.startsWith('/vendor/three/')) {                       // Three.js for the 3D page: only its build and addons folders
-      const root = path.join(__dirname, 'node_modules', 'three'), f = path.normalize(path.join(root, name.slice('/vendor/three/'.length)));
-      if (!/^(build|examples[\\/]jsm)[\\/]/.test(path.relative(root, f)) || !f.endsWith('.js')) throw new HttpError(404, 'not found');
-      return send(res, 200, await fs.promises.readFile(f).catch(() => { throw new HttpError(404, 'not found'); }), MIME['.js']);
-    }
+    if (name === '/3d') return send(res, 200, fs.readFileSync(path.join(SITE, '3d.html'), 'utf8').replace('</head>', '<meta name="robots" content="noindex, nofollow">\n</head>'), MIME['.html']);   // the private build is not indexed
     const file = path.normalize(path.join(SITE, name));
     if (!file.startsWith(SITE + path.sep) || name === '/_headers' || name === '/sw.js') throw new HttpError(404, 'not found');
     const data = await fs.promises.readFile(file).catch(() => { throw new HttpError(404, 'not found'); });

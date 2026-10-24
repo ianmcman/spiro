@@ -311,6 +311,7 @@ body:not(.open) .fab { display: block; }
             <button type="button" class="btn" id="gif">Save GIF</button>
             <button type="button" class="btn" id="finish">Finish now</button>
             <button type="button" class="btn" id="link">Copy link</button>
+            <button type="button" class="btn wide spiro-only" id="to3d">Open in 3D</button>
             <button type="button" class="btn wide" id="clear">Clear all</button>
           </div>
           <p class="note">Drag around the canvas to roll the wheel by hand. Scroll or pinch to zoom; Shift-drag or two fingers to pan.</p>
@@ -325,8 +326,6 @@ body:not(.open) .fab { display: block; }
           <div class="actions">
             <label class="field wide"><span>Name</span><input type="text" class="text" id="sv-name" maxlength="60" autocomplete="off" placeholder="Name this design"></label>
             <button type="button" class="btn wide" id="sv-save">Save to server</button>
-            <button type="button" class="btn wide" id="sv-3dconv">Convert to 3D</button>
-            <a class="btn wide" href="3d" target="_blank" rel="noopener">3D spirograph</a>
           </div>
           <div class="sv-list" id="sv-designs"></div>
           <p class="note">Keeps the pattern, kept layers and picture on the server. Opens from a short link (Copy link on a saved design).</p>
@@ -1649,32 +1648,6 @@ function initServerUI() {
     if (b.dataset.act === 'rerun') svBusy(b, async () => { await svPost('jobs/' + id + '/rerun', svExportOpts()); await svRefreshJobs(); });
   });
   $('sv-clean').addEventListener('change', () => { if (P.pic) geometryChanged(true); });
-  $('sv-3dconv').addEventListener('click', () => {
-    // Any pattern is a sum of turning arms: take the finished curve, find its strongest Fourier terms, and chain them. The 3D page's arms turn about parallel axes
-    // (a term at n turns per loop is arms with speeds that differ by the gaps), then the second arm is tilted out of the plane. Round shapes come out with 2 arms exactly.
-    const m = model;
-    if (!m || !m.xs || P.pic || (P.text && P.text.trim())) { alert('Only spirograph patterns convert to 3D, not names or pictures.'); return; }
-    fill(m, m.N);
-    const M = 4096, re = new Float64Array(M), im = new Float64Array(M);
-    for (let j = 0; j < M; j++) {
-      const f = j / M * m.N, i0 = Math.floor(f), t = f - i0, i1 = Math.min(m.N, i0 + 1);
-      re[j] = m.xs[i0] * (1 - t) + m.xs[i1] * t - m.cx; im[j] = m.ys[i0] * (1 - t) + m.ys[i1] * t - m.cy;
-    }
-    fft(re, im, -1);
-    const all = [];
-    for (let n = -120; n <= 120; n++) if (n) { const k = (n + M) % M, amp = Math.hypot(re[k], im[k]) / M; all.push({ n, amp, phi: Math.atan2(im[k], re[k]) }); }
-    all.sort((p, q) => q.amp - p.amp);
-    const total = all.reduce((s, t) => s + t.amp * t.amp, 0), terms = [];
-    let got = 0;
-    for (const t of all) { if (terms.length >= 16 || t.amp < all[0].amp * 0.002 || got >= 0.9995 * total) break; terms.push(t); got += t.amp * t.amp; }
-    let prev = 0;
-    const arms = terms.map((t, i) => { const w = -(t.n - prev); prev = t.n; return { L: +(t.amp / terms[0].amp).toFixed(3), w, tilt: i === 1 ? (terms.length > 3 ? 14 : 30) : 0, az: 0, ph: +((((-(t.phi * 180 / Math.PI + 90)) % 360) + 360) % 360).toFixed(1) }; });
-    if (arms.length < 2) arms.push({ L: 0, w: 1, tilt: 0, az: 0, ph: 0 });
-    const rgb = inkRGB(P, 0.5), mx = Math.max(...rgb), mn = Math.min(...rgb), dl = mx - mn;
-    const hue = dl ? Math.round(60 * (mx === rgb[0] ? ((rgb[1] - rgb[2]) / dl + 6) % 6 : mx === rgb[1] ? (rgb[2] - rgb[0]) / dl + 2 : (rgb[0] - rgb[1]) / dl + 4)) : 0;
-    const S = { arms, hue, hrange: P.ink === 'cycle' ? 360 : 0, pts: Math.min(20000, Math.max(8000, 60 * Math.max(...terms.map((t) => Math.abs(t.n))), 120 * arms.reduce((s, a) => s + Math.abs(a.w), 0))), mode: 'tube', spin: true, showarms: true, mm: 80, tube: 1.2 };
-    window.open('3d#' + btoa(JSON.stringify(S)), '_blank', 'noopener');
-  });
   $('sv-fetch').addEventListener('click', () => svBusy($('sv-fetch'), async () => {
     const r = await (await svPost('fetch', { url: $('sv-url').value.trim() })).json();
     if (P.text) { lastText = P.text; P.text = ''; }
@@ -2056,6 +2029,32 @@ async function shareLink() {
   try { await navigator.clipboard.writeText(url); btn.textContent = 'Copied'; } catch (_) { btn.textContent = 'Copy failed'; }
   setTimeout(() => { btn.textContent = 'Copy link'; }, 1500);
 }
+// Opens the current pattern on the 3D page. Any pattern is a sum of turning arms: take the finished curve, find its strongest Fourier terms and chain them. The 3D page's arms turn about parallel axes
+// (a term at n turns per loop is arms whose speeds differ by the gaps), then the second arm is tilted out of the plane. Round shapes come out as 2 arms exactly.
+function openIn3D() {
+  const m = model;
+  if (!m || !m.xs || P.pic || (P.text && P.text.trim())) { alert('Only spirograph patterns convert to 3D, not names or pictures.'); return; }
+  fill(m, m.N);
+  const M = 4096, re = new Float64Array(M), im = new Float64Array(M);
+  for (let j = 0; j < M; j++) {
+    const f = j / M * m.N, i0 = Math.floor(f), t = f - i0, i1 = Math.min(m.N, i0 + 1);
+    re[j] = m.xs[i0] * (1 - t) + m.xs[i1] * t - m.cx; im[j] = m.ys[i0] * (1 - t) + m.ys[i1] * t - m.cy;
+  }
+  fft(re, im, -1);
+  const all = [];
+  for (let n = -120; n <= 120; n++) if (n) { const k = (n + M) % M, amp = Math.hypot(re[k], im[k]) / M; all.push({ n, amp, phi: Math.atan2(im[k], re[k]) }); }
+  all.sort((p, q) => q.amp - p.amp);
+  const total = all.reduce((s, t) => s + t.amp * t.amp, 0), terms = [];
+  let got = 0;
+  for (const t of all) { if (terms.length >= 16 || t.amp < all[0].amp * 0.002 || got >= 0.9995 * total) break; terms.push(t); got += t.amp * t.amp; }
+  let prev = 0;
+  const arms = terms.map((t, i) => { const w = -(t.n - prev); prev = t.n; return { L: +(t.amp / terms[0].amp).toFixed(3), w, tilt: i === 1 ? (terms.length > 3 ? 14 : 30) : 0, az: 0, ph: +((((-(t.phi * 180 / Math.PI + 90)) % 360) + 360) % 360).toFixed(1) }; });
+  if (arms.length < 2) arms.push({ L: 0, w: 1, tilt: 0, az: 0, ph: 0 });
+  const rgb = inkRGB(P, 0.5), mx = Math.max(...rgb), mn = Math.min(...rgb), dl = mx - mn;
+  const hue = dl ? Math.round(60 * (mx === rgb[0] ? ((rgb[1] - rgb[2]) / dl + 6) % 6 : mx === rgb[1] ? (rgb[2] - rgb[0]) / dl + 2 : (rgb[0] - rgb[1]) / dl + 4)) : 0;
+  const S = { arms, hue, hrange: P.ink === 'cycle' ? 360 : 0, pts: Math.min(20000, Math.max(8000, 60 * Math.max(...terms.map((t) => Math.abs(t.n))), 120 * arms.reduce((s, a) => s + Math.abs(a.w), 0))), mode: 'tube', spin: true, showarms: true, mm: 80, tube: 1.2 };
+  window.open('/3d#' + btoa(JSON.stringify(S)), '_blank', 'noopener');
+}
 // Draw the rest of the pattern at once.
 function finish() {
   if (!model || drawn >= N) return;
@@ -2283,6 +2282,7 @@ function init() {
   $('clear').addEventListener('click', () => { layers = []; paintBase(); clearTrace(); drawn = 0; paused = true; updateReadout(); schedule(); });
   $('keep').addEventListener('click', keepLayer);
   $('finish').addEventListener('click', finish);
+  $('to3d').addEventListener('click', openIn3D);
   $('link').addEventListener('click', shareLink);
   $('undo').addEventListener('click', undoLayer);
   $('svg').addEventListener('click', saveSVG);
