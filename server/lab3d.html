@@ -6,55 +6,127 @@
 <meta name="robots" content="noindex, nofollow">
 <title>3D Spirograph (lab)</title>
 <style>
-  :root { --bg: #1b1c17; --card: #282923; --line: #3e3d32; --fg: #f8f8f2; --dim: #a6a68f; --acc: #66d9ef; }
-  * { box-sizing: border-box; }
-  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); font: 13px/1.4 "JetBrains Mono", ui-monospace, monospace; }
-  #app { display: grid; grid-template-columns: 310px 1fr; height: 100%; }
-  #panel { overflow-y: auto; padding: 12px; border-right: 1px solid var(--line); background: var(--card); }
-  #view { position: relative; min-width: 0; }
-  canvas { display: block; width: 100%; height: 100%; }
-  h1 { font-size: 13px; margin: 0 0 8px; text-transform: uppercase; letter-spacing: .08em; }
-  h2 { font-size: 11px; margin: 14px 0 6px; text-transform: uppercase; letter-spacing: .08em; color: var(--dim); }
-  a { color: var(--acc); }
-  label { display: grid; grid-template-columns: 78px 1fr 44px; gap: 6px; align-items: center; margin: 3px 0; color: var(--dim); }
-  label.wide { grid-template-columns: 1fr auto; }
-  input[type=range] { width: 100%; accent-color: var(--acc); }
-  output { text-align: right; color: var(--fg); }
-  .arm { border: 1px solid var(--line); border-radius: 4px; padding: 6px 8px; margin: 6px 0; }
-  .arm b { color: var(--acc); }
-  .row { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
-  button, select, input[type=number] { background: var(--bg); color: var(--fg); border: 1px solid var(--line); border-radius: 4px; padding: 6px 10px; font: inherit; }
-  button { cursor: pointer; }
-  button:hover { border-color: var(--acc); }
-  input[type=number] { width: 70px; }
-  .note { color: var(--dim); font-size: 11px; margin-top: 10px; }
-  @media (max-width: 760px) { #app { grid-template-columns: 1fr; grid-template-rows: 55% 45%; } #view { order: -1; } #panel { border-right: 0; border-top: 1px solid var(--line); } }
+@font-face { font-family: 'JetBrains Mono'; font-style: normal; font-weight: 400; font-display: swap; src: url('JetBrainsMono-Regular.woff2') format('woff2'); }
+:root {
+  --bg: hsl(70, 8%, 15%);
+  --card: hsl(70, 8%, 16%);
+  --card-border: hsl(70, 8%, 19.4%);
+  --card-shadow: hsl(70, 8%, 14.5%);
+  --separator: hsl(70, 8%, 19.4%);
+  --field-border: hsl(70, 8%, 27%);
+  --track: hsl(70, 8%, 26%);
+  --text: hsl(70, 8%, 63.8%);
+  --text-hi: hsl(70, 8%, 93.5%);
+  --text-sub: hsl(70, 8%, 38.5%);
+  --primary: hsl(190, 81%, 67%);
+  --positive: hsl(80, 76%, 53%);
+  --radius: 5px;
+  --pad: 15px 17px;
+}
+* { box-sizing: border-box; }
+html { font-size: 62.5%; }
+html, body { margin: 0; height: 100%; }
+body {
+  background: var(--bg); color: var(--text);
+  font: 1.3rem/1.6 'JetBrains Mono', ui-monospace, Menlo, Consolas, monospace; font-variant-ligatures: none;
+  overflow: hidden; overscroll-behavior: none; -webkit-text-size-adjust: 100%;
+}
+::selection { background: hsl(70, 8%, 35%); color: var(--text-hi); }
+button, select, input { font: inherit; }
+:focus-visible { outline: 1px solid var(--primary); outline-offset: 2px; }
+.panel-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 17px; border-bottom: 1px solid var(--separator); flex: none; }
+.panel-head h1 { margin: 0; font-size: 1.5rem; font-weight: 400; color: var(--text-hi); }
+.widget { margin-top: 15px; }
+.widget-header { padding: 0 18px; margin: 0 0 0.9rem; font-size: 1.4rem; font-weight: 400; line-height: inherit; text-transform: uppercase; color: var(--text); }
+.card { background: var(--card); border: 1px solid var(--card-border); border-radius: var(--radius); box-shadow: 0 3px 0 0 var(--card-shadow); padding: var(--pad); }
+.pair { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.field > span, .note { font-size: 1.2rem; color: var(--text-sub); }
+.note { margin: 10px 0 0; }
+select {
+  -webkit-appearance: none; appearance: none; width: 100%; min-height: 40px; padding: 0 30px 0 10px;
+  font-size: 16px; /* 16px stops iOS zoom on focus */
+  color: var(--text-hi); background-color: transparent; border: 1px solid var(--field-border); border-radius: var(--radius); cursor: pointer;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23a4a698' stroke-width='1.4'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 10px center;
+}
+select:focus, .text:focus { outline: none; border-color: var(--primary); }
+.text { width: 100%; min-height: 40px; padding: 0 10px; font: inherit; font-size: 16px; color: var(--text-hi); background: transparent; border: 1px solid var(--field-border); border-radius: var(--radius); }
+select option { background: var(--card); color: var(--text-hi); }
+/* buttons: outlined, text colour carries the state */
+.btn, .seg button, .quick button, .icon-btn, .fab {
+  min-height: 40px; padding: 0 12px; border: 1px solid var(--field-border); border-radius: var(--radius); cursor: pointer; touch-action: manipulation;
+  background: transparent; color: var(--text-hi); font-size: 1.3rem; transition: border-color .2s, color .2s;
+}
+.btn:hover, .seg button:hover, .quick button:hover, .icon-btn:hover, .fab:hover { border-color: var(--text-sub); }
+.btn.primary { color: var(--primary); border-color: var(--primary); }
+.row { display: grid; grid-template-columns: 1fr auto; grid-template-areas: "lab val" "rng rng"; align-items: center; column-gap: 8px; padding: 2px 0; }
+.row + .row { margin-top: 4px; }
+.row .lab { grid-area: lab; color: var(--text); }
+.row .num { grid-area: val; width: 6ch; padding: 0 4px; margin-right: -5px; text-align: right; color: var(--text-hi); font-variant-numeric: tabular-nums; background: transparent; border: 1px solid transparent; border-bottom: 1px dashed var(--field-border); border-radius: 4px; }
+.row .num:hover, .row .num:focus { border: 1px solid var(--field-border); outline: none; }
+.row input[type=range] { grid-area: rng; }
+input[type=range] { -webkit-appearance: none; appearance: none; width: 100%; height: 26px; margin: 0; background: transparent; cursor: pointer; touch-action: pan-y; }
+input[type=range]::-webkit-slider-runnable-track { height: 3px; border-radius: 2px; background: var(--track); }
+input[type=range]::-moz-range-track { height: 3px; border-radius: 2px; background: var(--track); }
+input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 14px; height: 14px; margin-top: -5.5px; border-radius: 50%; border: 0; background: var(--text-hi); }
+input[type=range]::-moz-range-thumb { width: 14px; height: 14px; border-radius: 50%; border: 0; background: var(--text-hi); }
+input[type=range]:active::-webkit-slider-thumb { background: var(--primary); }
+input[type=range]:active::-moz-range-thumb { background: var(--primary); }
+.check { display: flex; align-items: center; gap: 10px; min-height: 36px; margin-top: 6px; cursor: pointer; color: var(--text); }
+.check input { width: 16px; height: 16px; margin: 0; accent-color: var(--primary); cursor: pointer; }
+.actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.actions .wide { grid-column: 1 / -1; }
+a.btn { display: inline-flex; align-items: center; justify-content: center; text-decoration: none; }
+a { color: var(--text); text-decoration: none; }
+a:hover { color: var(--primary); }
+.pair .check { align-self: end; margin-top: 0; }
+.app { display: flex; width: 100%; height: 100vh; height: 100dvh; }
+#view { flex: 1; min-width: 0; position: relative; }
+#view canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+.panel { width: 340px; flex: none; display: flex; flex-direction: column; background: var(--bg); border-left: 1px solid var(--separator); }
+.panel-body { overflow-y: auto; flex: 1; padding: 8px 15px 23px; scrollbar-width: thin; scrollbar-color: var(--text-sub) transparent; }
+.panel-head a { font-size: 1.3rem; }
+@media (max-width: 760px) { .app { flex-direction: column; } #view { flex: 0 0 52%; } .panel { width: 100%; flex: 1; border-left: 0; border-top: 1px solid var(--separator); } .btn, .check { min-height: 44px; } }
 </style>
 <script type="importmap">{ "imports": { "three": "/vendor/three/build/three.module.js", "three/addons/": "/vendor/three/examples/jsm/" } }</script>
 </head>
 <body>
-<div id="app">
-  <div id="panel">
-    <h1>3D Spirograph</h1>
-    <a href="/">&larr; back to the lab</a>
-    <h2>Arms</h2>
-    <div id="arms"></div>
-    <p class="note">Three arms joined end to end. Each turns about its own axis (tilt from vertical, azimuth around it) at a whole-number speed, carrying everything after it. The pen is at the tip. Whole-number speeds close the curve after one turn.</p>
-    <h2>Look</h2>
-    <label><span>Hue</span><input type="range" id="hue" min="0" max="360" value="190"><output></output></label>
-    <label><span>Hue range</span><input type="range" id="hrange" min="0" max="720" value="240"><output></output></label>
-    <label><span>Points</span><input type="range" id="pts" min="1000" max="20000" step="500" value="8000"><output></output></label>
-    <div class="row"><select id="mode"><option value="line">Line</option><option value="tube">Tube</option></select>
-      <label class="wide" style="margin:0"><span>Spin</span><input type="checkbox" id="spin" checked></label></div>
-    <div class="row"><button id="rand">Randomise</button><button id="replay">Draw again</button></div>
-    <h2>Export</h2>
-    <label class="wide"><span>Size (mm)</span><input type="number" id="mm" value="80" min="10" max="300"></label>
-    <label class="wide"><span>Tube (mm)</span><input type="number" id="tube" value="1.2" min="0.2" max="10" step="0.1"></label>
-    <div class="row"><button id="png">PNG</button><button id="stl">STL</button><button id="webm">Turntable (WebM)</button></div>
-    <div class="row"><button id="link">Copy link</button></div>
-    <p class="note" id="msg"></p>
-  </div>
+<div class="app">
   <div id="view"></div>
+  <aside class="panel">
+    <div class="panel-head"><h1>3D Spirograph</h1><a href="/">Back to the lab</a></div>
+    <div class="panel-body">
+      <div id="arms"></div>
+      <p class="note">Three arms joined end to end. Each turns about its own axis (tilt from vertical, azimuth around it) at a whole-number speed, carrying everything after it. The pen is at the tip. Whole-number speeds close the curve after one turn.</p>
+      <section class="widget"><h2 class="widget-header">Look</h2>
+        <div class="card">
+          <label class="row"><span class="lab">Hue</span><output class="num"></output><input type="range" id="hue" min="0" max="360" value="190"></label>
+          <label class="row"><span class="lab">Hue range</span><output class="num"></output><input type="range" id="hrange" min="0" max="720" value="240"></label>
+          <label class="row"><span class="lab">Points</span><output class="num"></output><input type="range" id="pts" min="1000" max="20000" step="500" value="8000"></label>
+          <div class="pair" style="margin-top:10px">
+            <label class="field"><span>View</span><select id="mode"><option value="line">Line</option><option value="tube">Tube</option></select></label>
+            <label class="check"><input type="checkbox" id="spin" checked><span>Spin</span></label>
+          </div>
+          <div class="actions" style="margin-top:10px"><button type="button" class="btn" id="rand">Randomise</button><button type="button" class="btn" id="replay">Draw again</button></div>
+        </div>
+      </section>
+      <section class="widget"><h2 class="widget-header">Export</h2>
+        <div class="card">
+          <div class="pair">
+            <label class="field"><span>Size (mm)</span><input type="text" class="text" id="mm" inputmode="decimal" value="80"></label>
+            <label class="field"><span>Tube radius (mm)</span><input type="text" class="text" id="tube" inputmode="decimal" value="1.2"></label>
+          </div>
+          <div class="actions" style="margin-top:10px">
+            <button type="button" class="btn" id="png">PNG</button><button type="button" class="btn" id="stl">STL</button>
+            <button type="button" class="btn wide" id="webm">Turntable (WebM)</button>
+            <button type="button" class="btn wide" id="link">Copy link</button>
+          </div>
+          <p class="note" id="msg"></p>
+        </div>
+      </section>
+    </div>
+  </aside>
 </div>
 <script>
 // show script errors on the page (module load failures happen before the module runs)
@@ -108,7 +180,7 @@ try { if (location.search.includes('flat')) throw 0; renderer = new THREE.WebGLR
 const flat = renderer ? null : document.createElement('canvas'), fx = flat && flat.getContext('2d'), surface = renderer ? renderer.domElement : flat;
 view.appendChild(surface);
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x1b1c17);
+scene.background = new THREE.Color(0x282923);
 const camera = new THREE.PerspectiveCamera(40, 1, 1, 2000);
 camera.position.set(0, 60, 180);
 const controls = renderer ? new OrbitControls(camera, surface) : { autoRotate: false, autoRotateSpeed: 2, update() {} };
@@ -159,7 +231,7 @@ function setDraw(k) { if (!obj) return; if (S.mode === 'tube') obj.geometry.setD
 // 2D fallback: turn by yaw and pitch, look from a distance, draw consecutive points in short coloured runs
 function drawFlat() {
   const w = flat.width, h = flat.height, sc = Math.min(w, h) / 230 * fb.zoom, cy = Math.cos(fb.yaw), sy = Math.sin(fb.yaw), cp = Math.cos(fb.pitch), sp = Math.sin(fb.pitch), n = Math.min(fb.pts.length, Math.floor(drawn));
-  fx.fillStyle = '#1b1c17'; fx.fillRect(0, 0, w, h);
+  fx.fillStyle = '#282923'; fx.fillRect(0, 0, w, h);
   fx.lineWidth = Math.max(1, sc * (S.mode === 'tube' ? 2.4 : 0.9)); fx.lineCap = 'round';
   const X = new Float32Array(n + 1), Y = new Float32Array(n + 1), Z = new Float32Array(n + 1);
   for (let i = 0; i <= n; i++) {
@@ -197,8 +269,8 @@ function save() { history.replaceState(null, '', '#' + btoa(JSON.stringify(S)));
 let timer = 0;
 const change = () => { save(); clearTimeout(timer); timer = setTimeout(build, 60); };
 function panel() {
-  $('arms').innerHTML = S.arms.map((a, i) => '<div class="arm"><b>Arm ' + (i + 1) + '</b>' + SL.map(([k, name, lo, hi, st]) =>
-    '<label><span>' + name + '</span><input type="range" data-i="' + i + '" data-k="' + k + '" min="' + lo + '" max="' + hi + '" step="' + st + '"><output></output></label>').join('') + '</div>').join('');
+  $('arms').innerHTML = S.arms.map((a, i) => '<section class="widget"><h2 class="widget-header">Arm ' + (i + 1) + '</h2><div class="card">' + SL.map(([k, name, lo, hi, st]) =>
+    '<label class="row"><span class="lab">' + name + '</span><output class="num"></output><input type="range" data-i="' + i + '" data-k="' + k + '" min="' + lo + '" max="' + hi + '" step="' + st + '"></label>').join('') + '</div></section>').join('');
   for (const el of document.querySelectorAll('#arms input')) bind(el, () => S.arms[el.dataset.i][el.dataset.k], (v) => { S.arms[el.dataset.i][el.dataset.k] = v; }, change);
   for (const k of ['hue', 'hrange', 'pts']) bind($(k), () => S[k], (v) => { S[k] = v; }, change);
   bind($('mode'), () => S.mode, (v) => { S.mode = v; }, change);
