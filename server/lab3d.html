@@ -77,6 +77,10 @@ input[type=range]:active::-moz-range-thumb { background: var(--primary); }
 .check input { width: 16px; height: 16px; margin: 0; accent-color: var(--primary); cursor: pointer; }
 .actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .actions .wide { grid-column: 1 / -1; }
+details.widget > summary { list-style: none; cursor: pointer; }
+details.widget > summary::-webkit-details-marker { display: none; }
+details.widget > summary::after { content: ' +'; color: var(--text-sub); }
+details.widget[open] > summary::after { content: ' -'; }
 a.btn { display: inline-flex; align-items: center; justify-content: center; text-decoration: none; }
 a { color: var(--text); text-decoration: none; }
 a:hover { color: var(--primary); }
@@ -98,7 +102,8 @@ a:hover { color: var(--primary); }
     <div class="panel-head"><h1>3D Spirograph</h1><a href="/">Back to the lab</a></div>
     <div class="panel-body">
       <div id="arms"></div>
-      <p class="note">Three arms joined end to end. Each turns about its own axis (tilt from vertical, azimuth around it) at a whole-number speed, carrying everything after it. The pen is at the tip. Whole-number speeds close the curve after one turn.</p>
+      <div class="actions" style="margin-top:10px"><button type="button" class="btn" id="addarm">Add arm</button><button type="button" class="btn" id="delarm">Remove arm</button></div>
+      <p class="note">Arms are joined end to end. Each turns about its own axis (tilt from vertical, azimuth around it) at a whole-number speed, carrying everything after it. The pen is at the tip. Whole-number speeds close the curve after one turn.</p>
       <section class="widget"><h2 class="widget-header">Look</h2>
         <div class="card">
           <label class="row"><span class="lab">Hue</span><output class="num"></output><input type="range" id="hue" min="0" max="360" value="190"></label>
@@ -108,6 +113,7 @@ a:hover { color: var(--primary); }
             <label class="field"><span>View</span><select id="mode"><option value="line">Line</option><option value="tube">Tube</option></select></label>
             <label class="check"><input type="checkbox" id="spin" checked><span>Spin</span></label>
           </div>
+          <label class="check"><input type="checkbox" id="showarms"><span>Show the arms</span></label>
           <div class="actions" style="margin-top:10px"><button type="button" class="btn" id="rand">Randomise</button><button type="button" class="btn" id="replay">Draw again</button></div>
         </div>
       </section>
@@ -141,7 +147,7 @@ import { STLExporter } from 'three/addons/exporters/STLExporter.js';
 const $ = (id) => document.getElementById(id);
 const DEF = {
   arms: [{ L: 1, w: 1, tilt: 90, az: 0, ph: 0 }, { L: 0.6, w: 5, tilt: 40, az: 70, ph: 0 }, { L: 0.35, w: -9, tilt: 110, az: 200, ph: 0 }],
-  hue: 190, hrange: 240, pts: 8000, mode: 'line', spin: true, mm: 80, tube: 1.2,
+  hue: 190, hrange: 240, pts: 8000, mode: 'line', spin: true, showarms: false, mm: 80, tube: 1.2,
 };
 let S = JSON.parse(JSON.stringify(DEF));
 try { if (location.hash.length > 1) S = Object.assign(S, JSON.parse(atob(location.hash.slice(1)))); } catch (_) { /* bad link: defaults */ }
@@ -167,8 +173,10 @@ function curve(n) {
   return out;
 }
 // centre on the middle of its bounds, scale so the longest side is size
+const lastFit = { c: new THREE.Vector3(), k: 1 };
 function fit(pts, size) {
   const box = new THREE.Box3().setFromPoints(pts), c = box.getCenter(new THREE.Vector3()), m = Math.max(...box.getSize(new THREE.Vector3()).toArray()) || 1;
+  lastFit.c = c; lastFit.k = size / m;
   return pts.map((p) => p.clone().sub(c).multiplyScalar(size / m));
 }
 
@@ -200,6 +208,17 @@ function colours(n) {
   for (let i = 0; i < n; i++) { c.setHSL(((S.hue + S.hrange * i / n) % 360) / 360, 0.75, 0.6); a.set([c.r, c.g, c.b], 3 * i); }
   return a;
 }
+// Where each arm ends at turn t (0 to 2 pi), in the fitted view space: origin, then the end of arm 1, 2, ... the last being the pen.
+function joints(t) {
+  const fr = armFrames(), out = [new THREE.Vector3()];
+  for (let k = 0; k < fr.length; k++) {
+    const v = new THREE.Vector3();
+    for (let j = k; j >= 0; j--) v.add(fr[j].d).applyAxisAngle(fr[j].ax, fr[j].w * t);
+    out.push(v);
+  }
+  return out.map((p) => p.sub(lastFit.c).multiplyScalar(lastFit.k));
+}
+let armT = 0, armObj = null;
 const fb = { pts: [], col: null, yaw: 0.6, pitch: 0.4, zoom: 1 };
 function build() {
   if (!renderer) {
@@ -209,6 +228,11 @@ function build() {
   }
   if (obj) { scene.remove(obj); obj.geometry.dispose(); }
   const pts = fit(curve(S.pts), 100), n = pts.length;
+  if (armObj) { scene.remove(armObj); armObj.children.forEach((c) => c.geometry.dispose()); }
+  armObj = new THREE.Group();                                       // the arm chain: a white line with a dot at every joint
+  const ag = new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(new Float32Array((S.arms.length + 1) * 3), 3));
+  const aline = new THREE.Line(ag, new THREE.LineBasicMaterial({ color: 0xf8f8f2, depthTest: false })), apts = new THREE.Points(ag, new THREE.PointsMaterial({ color: 0x66d9ef, size: 7, sizeAttenuation: false, depthTest: false }));
+  aline.renderOrder = apts.renderOrder = 10; armObj.add(aline, apts); armObj.visible = S.showarms; scene.add(armObj);
   if (S.mode === 'tube') {
     const g = new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts, true, 'centripetal'), Math.min(n, 4000), 1.2, 8, true), cnt = g.attributes.position.count, col = new Float32Array(cnt * 3), seg = 9, base = colours(Math.min(n, 4000) + 1);
     for (let v = 0; v < cnt; v++) col.set(base.subarray(3 * Math.floor(v / seg), 3 * Math.floor(v / seg) + 3), 3 * v);
@@ -232,7 +256,7 @@ function setDraw(k) { if (!obj) return; if (S.mode === 'tube') obj.geometry.setD
 function drawFlat() {
   const w = flat.width, h = flat.height, sc = Math.min(w, h) / 230 * fb.zoom, cy = Math.cos(fb.yaw), sy = Math.sin(fb.yaw), cp = Math.cos(fb.pitch), sp = Math.sin(fb.pitch), n = Math.min(fb.pts.length, Math.floor(drawn));
   fx.fillStyle = '#282923'; fx.fillRect(0, 0, w, h);
-  fx.lineWidth = Math.max(1, sc * (S.mode === 'tube' ? 2.4 : 0.9)); fx.lineCap = 'round';
+  fx.lineWidth = Math.max(1, sc * (S.mode === 'tube' ? 1.3 : 0.9)); fx.lineCap = 'round';
   const X = new Float32Array(n + 1), Y = new Float32Array(n + 1), Z = new Float32Array(n + 1);
   for (let i = 0; i <= n; i++) {
     const p = fb.pts[i % fb.pts.length], x = p.x * cy + p.z * sy, z0 = -p.x * sy + p.z * cy, y = p.y * cp - z0 * sp, z = p.y * sp + z0 * cp, f = 1 / (1 - z / 400);
@@ -242,6 +266,11 @@ function drawFlat() {
     const e = Math.min(n, i + 6), c = fb.col, k = 3 * i, a = 0.45 + 0.55 * (Z[i] + 60) / 120;
     fx.strokeStyle = 'rgba(' + Math.round(c[k] * 255) + ',' + Math.round(c[k + 1] * 255) + ',' + Math.round(c[k + 2] * 255) + ',' + Math.min(1, Math.max(0.25, a)) + ')';
     fx.beginPath(); fx.moveTo(X[i], Y[i]); for (let j = i + 1; j <= e; j++) fx.lineTo(X[j], Y[j]); fx.stroke();
+  }
+  if (S.showarms) {
+    const js = joints(armT).map((p) => { const x = p.x * cy + p.z * sy, z0 = -p.x * sy + p.z * cy, y = p.y * cp - z0 * sp, z = p.y * sp + z0 * cp, f = 1 / (1 - z / 400); return [w / 2 + x * sc * f, h / 2 - y * sc * f]; });
+    fx.strokeStyle = '#f8f8f2'; fx.lineWidth = Math.max(1, sc * 0.8); fx.beginPath(); js.forEach(([x, y], i) => (i ? fx.lineTo(x, y) : fx.moveTo(x, y))); fx.stroke();
+    fx.fillStyle = '#66d9ef'; for (const [x, y] of js) { fx.beginPath(); fx.arc(x, y, Math.max(2, sc * 1.6), 0, 7); fx.fill(); }
   }
 }
 if (!renderer) {
@@ -253,13 +282,15 @@ if (!renderer) {
 }
 const loop = () => {
   if (growing) { drawn = Math.min(total, drawn + total / 240); if (obj) setDraw(drawn); if (drawn >= total) growing = false; }
+  armT = growing ? 2 * Math.PI * drawn / total : armT + 0.008;           // the arms follow the pen while it draws, then keep turning
+  if (renderer && armObj && S.showarms) { const pos = armObj.children[0].geometry.attributes.position; joints(armT).forEach((p, i) => pos.setXYZ(i, p.x, p.y, p.z)); pos.needsUpdate = true; }
   if (renderer) { controls.autoRotate = S.spin; controls.update(); renderer.render(scene, camera); }
   else { if (S.spin) fb.yaw += 0.002 * controls.autoRotateSpeed; if (fb.pts.length) drawFlat(); }
 };
 (renderer || { setAnimationLoop: (f) => { const t = () => { f(); requestAnimationFrame(t); }; t(); } }).setAnimationLoop(loop);
 
 /* ---- the panel ---- */
-const SL = [['L', 'Length', 0, 3, 0.01], ['w', 'Speed', -100, 100, 1], ['tilt', 'Tilt', 0, 180, 1], ['az', 'Azimuth', 0, 360, 1], ['ph', 'Phase', 0, 360, 1]];
+const SL = [['L', 'Length', 0, 3, 0.01], ['w', 'Speed', -300, 300, 1], ['tilt', 'Tilt', 0, 180, 1], ['az', 'Azimuth', 0, 360, 1], ['ph', 'Phase', 0, 360, 1]];
 function bind(el, get, set, after) {
   const out = el.parentElement.querySelector('output');
   el.value = get(); if (out) out.textContent = get();
@@ -269,12 +300,14 @@ function save() { history.replaceState(null, '', '#' + btoa(JSON.stringify(S)));
 let timer = 0;
 const change = () => { save(); clearTimeout(timer); timer = setTimeout(build, 60); };
 function panel() {
-  $('arms').innerHTML = S.arms.map((a, i) => '<section class="widget"><h2 class="widget-header">Arm ' + (i + 1) + '</h2><div class="card">' + SL.map(([k, name, lo, hi, st]) =>
-    '<label class="row"><span class="lab">' + name + '</span><output class="num"></output><input type="range" data-i="' + i + '" data-k="' + k + '" min="' + lo + '" max="' + hi + '" step="' + st + '"></label>').join('') + '</div></section>').join('');
+  $('arms').innerHTML = S.arms.map((a, i) => '<details class="widget"' + (i < 3 ? ' open' : '') + '><summary class="widget-header">Arm ' + (i + 1) + '</summary><div class="card">' + SL.map(([k, name, lo, hi, st]) =>
+    '<label class="row"><span class="lab">' + name + '</span><output class="num"></output><input type="range" data-i="' + i + '" data-k="' + k + '" min="' + lo + '" max="' + hi + '" step="' + st + '"></label>').join('') + '</div></details>').join('');
   for (const el of document.querySelectorAll('#arms input')) bind(el, () => S.arms[el.dataset.i][el.dataset.k], (v) => { S.arms[el.dataset.i][el.dataset.k] = v; }, change);
   for (const k of ['hue', 'hrange', 'pts']) bind($(k), () => S[k], (v) => { S[k] = v; }, change);
   bind($('mode'), () => S.mode, (v) => { S.mode = v; }, change);
   bind($('spin'), () => S.spin, (v) => { S.spin = v; }, save);
+  bind($('showarms'), () => S.showarms, (v) => { S.showarms = v; if (armObj) armObj.visible = v; }, save);
+  $('showarms').checked = S.showarms;
   $('spin').checked = S.spin;
   $('mm').value = S.mm; $('tube').value = S.tube;
   $('mm').oninput = () => { S.mm = +$('mm').value || 80; save(); }; $('tube').oninput = () => { S.tube = +$('tube').value || 1.2; save(); };
@@ -284,6 +317,8 @@ $('rand').onclick = () => {
   S.arms = [0, 1, 2].map((i) => ({ L: +[1, rnd(0.3, 0.9), rnd(0.1, 0.6)][i].toFixed(2), w: (Math.random() < 0.5 ? -1 : 1) * ri(...[[1, 4], [3, 12], [6, 20]][i]), tilt: ri(0, 180), az: ri(0, 360), ph: ri(0, 360) }));
   S.hue = ri(0, 360); panel(); change();
 };
+$('addarm').onclick = () => { if (S.arms.length < 16) { S.arms.push({ L: 0.2, w: 3, tilt: 0, az: 0, ph: 0 }); panel(); change(); } };
+$('delarm').onclick = () => { if (S.arms.length > 1) { S.arms.pop(); panel(); change(); } };
 $('replay').onclick = () => { drawn = 0; growing = true; };
 $('link').onclick = () => navigator.clipboard.writeText(location.href).then(() => msg('Link copied'));
 const msg = (t) => { $('msg').textContent = t; };

@@ -1650,15 +1650,29 @@ function initServerUI() {
   });
   $('sv-clean').addEventListener('change', () => { if (P.pic) geometryChanged(true); });
   $('sv-3dconv').addEventListener('click', () => {
-    // A rolling wheel is two arms: the wheel's centre goes round the ring k times while the pen goes round the centre; the 3D page tilts the second arm out of the plane.
+    // Any pattern is a sum of turning arms: take the finished curve, find its strongest Fourier terms, and chain them. The 3D page's arms turn about parallel axes
+    // (a term at n turns per loop is arms with speeds that differ by the gaps), then the second arm is tilted out of the plane. Round shapes come out with 2 arms exactly.
     const m = model;
-    if (!m || !m.clo || P.pic || (P.text && P.text.trim())) { alert('Only spirograph patterns convert to 3D, not names or pictures.'); return; }
-    const k = m.clo.k, wt = m.clo.m, inside = m.inside, c = inside ? m.ringR - m.wheelR : m.ringR + m.wheelR, pen = Math.hypot(m.penX, m.penY);
+    if (!m || !m.xs || P.pic || (P.text && P.text.trim())) { alert('Only spirograph patterns convert to 3D, not names or pictures.'); return; }
+    fill(m, m.N);
+    const M = 4096, re = new Float64Array(M), im = new Float64Array(M);
+    for (let j = 0; j < M; j++) {
+      const f = j / M * m.N, i0 = Math.floor(f), t = f - i0, i1 = Math.min(m.N, i0 + 1);
+      re[j] = m.xs[i0] * (1 - t) + m.xs[i1] * t - m.cx; im[j] = m.ys[i0] * (1 - t) + m.ys[i1] * t - m.cy;
+    }
+    fft(re, im, -1);
+    const all = [];
+    for (let n = -120; n <= 120; n++) if (n) { const k = (n + M) % M, amp = Math.hypot(re[k], im[k]) / M; all.push({ n, amp, phi: Math.atan2(im[k], re[k]) }); }
+    all.sort((p, q) => q.amp - p.amp);
+    const total = all.reduce((s, t) => s + t.amp * t.amp, 0), terms = [];
+    let got = 0;
+    for (const t of all) { if (terms.length >= 16 || t.amp < all[0].amp * 0.002 || got >= 0.9995 * total) break; terms.push(t); got += t.amp * t.amp; }
+    let prev = 0;
+    const arms = terms.map((t, i) => { const w = -(t.n - prev); prev = t.n; return { L: +(t.amp / terms[0].amp).toFixed(3), w, tilt: i === 1 ? (terms.length > 3 ? 14 : 30) : 0, az: 0, ph: +((((-(t.phi * 180 / Math.PI + 90)) % 360) + 360) % 360).toFixed(1) }; });
+    if (arms.length < 2) arms.push({ L: 0, w: 1, tilt: 0, az: 0, ph: 0 });
     const rgb = inkRGB(P, 0.5), mx = Math.max(...rgb), mn = Math.min(...rgb), dl = mx - mn;
     const hue = dl ? Math.round(60 * (mx === rgb[0] ? ((rgb[1] - rgb[2]) / dl + 6) % 6 : mx === rgb[1] ? (rgb[2] - rgb[0]) / dl + 2 : (rgb[0] - rgb[1]) / dl + 4)) : 0;
-    const w1 = k, w2 = inside ? -(wt - k) : wt + k;
-    const S = { arms: [{ L: 1, w: w1, tilt: 0, az: 0, ph: 0 }, { L: +(pen / c).toFixed(3), w: w2, tilt: 30, az: 0, ph: Math.round(P.angle) }, { L: 0, w: 1, tilt: 0, az: 0, ph: 0 }],
-      hue, hrange: P.ink === 'cycle' ? 360 : 0, pts: Math.min(20000, Math.max(8000, 120 * (Math.abs(w1) + Math.abs(w2)))), mode: 'tube', spin: true, mm: 80, tube: 1.2 };
+    const S = { arms, hue, hrange: P.ink === 'cycle' ? 360 : 0, pts: Math.min(20000, Math.max(8000, 60 * Math.max(...terms.map((t) => Math.abs(t.n))), 120 * arms.reduce((s, a) => s + Math.abs(a.w), 0))), mode: 'tube', spin: true, showarms: true, mm: 80, tube: 1.2 };
     window.open('3d#' + btoa(JSON.stringify(S)), '_blank', 'noopener');
   });
   $('sv-fetch').addEventListener('click', () => svBusy($('sv-fetch'), async () => {
