@@ -145,7 +145,7 @@ renderer.setAnimationLoop(() => {
 });
 
 /* ---- the panel ---- */
-const SL = [['L', 'Length', 0, 1.5, 0.01], ['w', 'Speed', -24, 24, 1], ['tilt', 'Tilt', 0, 180, 1], ['az', 'Azimuth', 0, 360, 1], ['ph', 'Phase', 0, 360, 1]];
+const SL = [['L', 'Length', 0, 3, 0.01], ['w', 'Speed', -100, 100, 1], ['tilt', 'Tilt', 0, 180, 1], ['az', 'Azimuth', 0, 360, 1], ['ph', 'Phase', 0, 360, 1]];
 function bind(el, get, set, after) {
   const out = el.parentElement.querySelector('output');
   el.value = get(); if (out) out.textContent = get();
