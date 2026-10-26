@@ -84,6 +84,7 @@ details.widget > summary { list-style: none; cursor: pointer; }
 details.widget > summary::-webkit-details-marker { display: none; }
 details.widget > summary::after { content: ' +'; color: var(--text-sub); }
 details.widget[open] > summary::after { content: ' -'; }
+.hidden { display: none !important; }
 a.btn { display: inline-flex; align-items: center; justify-content: center; text-decoration: none; }
 a { color: var(--text); text-decoration: none; }
 a:hover { color: var(--primary); }
@@ -103,6 +104,16 @@ a:hover { color: var(--primary); }
   <aside class="panel">
     <div class="panel-head"><h1>3D Spirograph</h1><a href="/">Back to the spirograph</a></div>
     <div class="panel-body">
+      <section class="widget"><h2 class="widget-header">Music</h2>
+        <div class="card">
+          <label class="field"><span>Source</span><select id="asrc"><option value="mic">Microphone</option><option value="tab">Tab or system audio</option><option value="file">Audio file</option></select></label>
+          <div id="afilebox" class="hidden" style="margin-top:10px"><input type="file" id="afile" accept="audio/*" class="text" style="padding-top:8px"><audio id="aud" controls style="width:100%;margin-top:8px"></audio></div>
+          <label class="row" style="margin-top:6px"><span class="lab">Sensitivity</span><output class="num"></output><input type="range" id="asens" min="0.5" max="3" step="0.1"></label>
+          <label class="row"><span class="lab">Motion</span><output class="num"></output><input type="range" id="amotion" min="0" max="1" step="0.05"></label>
+          <button type="button" class="btn primary wide" id="astart" style="margin-top:10px;width:100%">Start</button>
+          <p class="note" id="anote"></p>
+        </div>
+      </section>
       <div id="arms"></div>
       <div class="actions" style="margin-top:10px"><button type="button" class="btn" id="addarm">Add arm</button><button type="button" class="btn" id="delarm">Remove arm</button></div>
       <p class="note">Arms are joined end to end. Each turns about its own axis (tilt from vertical, azimuth around it) at a whole-number speed, carrying everything after it. The pen is at the tip. Whole-number speeds close the curve after one turn.</p>
@@ -155,8 +166,9 @@ try { if (location.hash.length > 1) S = Object.assign(S, JSON.parse(atob(locatio
 
 /* ---- the curve ---- */
 const axisOf = (tilt, az) => { const t = tilt * Math.PI / 180, a = az * Math.PI / 180; return new THREE.Vector3(Math.sin(t) * Math.cos(a), Math.cos(t), Math.sin(t) * Math.sin(a)).normalize(); };
+let live = null;                                                      // the arms as the music bends them, while the visualiser runs
 function armFrames() {
-  return S.arms.map((a) => {
+  return (live || S.arms).map((a) => {
     const ax = axisOf(a.tilt, a.az), ref = Math.abs(ax.x) < 0.9 ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 0, 1);
     const d = new THREE.Vector3().crossVectors(ax, ref).normalize().applyAxisAngle(ax, a.ph * Math.PI / 180).multiplyScalar(a.L);
     return { ax, d, w: Math.round(a.w) };
@@ -204,9 +216,10 @@ function size() {
 new ResizeObserver(size).observe(view); size();
 
 let obj = null, drawn = 0, total = 0, growing = false;
+let hueShift = 0, audioOn = false;
 function colours(n) {
   const c = new THREE.Color(), a = new Float32Array(n * 3);
-  for (let i = 0; i < n; i++) { c.setHSL(((S.hue + S.hrange * i / n) % 360) / 360, 0.75, 0.6); a.set([c.r, c.g, c.b], 3 * i); }
+  for (let i = 0; i < n; i++) { c.setHSL((((S.hue + hueShift + S.hrange * i / n) % 360) + 360) % 360 / 360, 0.75, 0.6); a.set([c.r, c.g, c.b], 3 * i); }
   return a;
 }
 // Where each arm ends at turn t (0 to 2 pi), in the fitted view space: origin, then the end of arm 1, 2, ... the last being the pen.
@@ -223,18 +236,18 @@ let armT = 0, armObj = null;
 const fb = { pts: [], col: null, yaw: 0.6, pitch: 0.4, zoom: 1 };
 function build() {
   if (!renderer) {
-    fb.pts = fit(curve(S.pts), 100); fb.col = colours(fb.pts.length + 1);
-    total = fb.pts.length + 1; drawn = 0; growing = true;
+    fb.pts = fit(curve(audioOn ? Math.min(S.pts, 10000) : S.pts), 100); fb.col = colours(fb.pts.length + 1);
+    total = fb.pts.length + 1; drawn = audioOn ? total : 0; growing = !audioOn;
     return;
   }
   if (obj) { scene.remove(obj); obj.geometry.dispose(); }
-  const pts = fit(curve(S.pts), 100), n = pts.length;
+  const pts = fit(curve(audioOn ? Math.min(S.pts, 10000) : S.pts), 100), n = pts.length, asTube = S.mode === 'tube' && !audioOn;      // the music view is always a line: a tube is too heavy to rebuild per frame
   if (armObj) { scene.remove(armObj); armObj.children.forEach((c) => c.geometry.dispose()); }
   armObj = new THREE.Group();                                       // the arm chain: a white line with a dot at every joint
   const ag = new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(new Float32Array((S.arms.length + 1) * 3), 3));
   const aline = new THREE.Line(ag, new THREE.LineBasicMaterial({ color: 0xf8f8f2, depthTest: false })), apts = new THREE.Points(ag, new THREE.PointsMaterial({ color: 0x66d9ef, size: 7, sizeAttenuation: false, depthTest: false }));
   aline.renderOrder = apts.renderOrder = 10; armObj.add(aline, apts); armObj.visible = S.showarms; scene.add(armObj);
-  if (S.mode === 'tube') {
+  if (asTube) {
     const g = new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts, true, 'centripetal'), Math.min(n, 4000), 1.2, 8, true), cnt = g.attributes.position.count, col = new Float32Array(cnt * 3), seg = 9, base = colours(Math.min(n, 4000) + 1);
     for (let v = 0; v < cnt; v++) col.set(base.subarray(3 * Math.floor(v / seg), 3 * Math.floor(v / seg) + 3), 3 * v);
     g.setAttribute('color', new THREE.BufferAttribute(col, 3));
@@ -250,9 +263,10 @@ function build() {
     total = n + 1;
   }
   scene.add(obj);
-  drawn = 0; growing = true;
+  drawn = audioOn ? total : 0; growing = !audioOn;
+  if (audioOn) setDraw(total);
 }
-function setDraw(k) { if (!obj) return; if (S.mode === 'tube') obj.geometry.setDrawRange(0, Math.floor(k / 3) * 3); else obj.geometry.setDrawRange(0, k); }
+function setDraw(k) { if (!obj) return; if (S.mode === 'tube' && !audioOn) obj.geometry.setDrawRange(0, Math.floor(k / 3) * 3); else obj.geometry.setDrawRange(0, k); }
 // 2D fallback: turn by yaw and pitch, look from a distance, draw consecutive points in short coloured runs
 function drawFlat() {
   const w = flat.width, h = flat.height, sc = Math.min(w, h) / 230 * fb.zoom, cy = Math.cos(fb.yaw), sy = Math.sin(fb.yaw), cp = Math.cos(fb.pitch), sp = Math.sin(fb.pitch), n = Math.min(fb.pts.length, Math.floor(drawn));
@@ -281,7 +295,10 @@ if (!renderer) {
   surface.addEventListener('pointermove', (e) => { if (!drag) return; fb.yaw += (e.clientX - drag[0]) * 0.01; fb.pitch = Math.max(-1.5, Math.min(1.5, fb.pitch + (e.clientY - drag[1]) * 0.01)); drag = [e.clientX, e.clientY]; });
   surface.addEventListener('wheel', (e) => { e.preventDefault(); fb.zoom = Math.max(0.3, Math.min(5, fb.zoom * (e.deltaY < 0 ? 1.1 : 0.9))); }, { passive: false });
 }
+let lastT = performance.now();
 const loop = () => {
+  const now = performance.now(), dt = Math.min(0.05, (now - lastT) / 1000); lastT = now;
+  if (audioOn) liveStep(dt, now);
   if (growing) { drawn = Math.min(total, drawn + total / 240); if (obj) setDraw(drawn); if (drawn >= total) growing = false; }
   armT = growing ? 2 * Math.PI * drawn / total : armT + 0.008;           // the arms follow the pen while it draws, then keep turning
   if (renderer && armObj && S.showarms) { const pos = armObj.children[0].geometry.attributes.position; joints(armT).forEach((p, i) => pos.setXYZ(i, p.x, p.y, p.z)); pos.needsUpdate = true; }
@@ -289,6 +306,103 @@ const loop = () => {
   else { if (S.spin) fb.yaw += 0.002 * controls.autoRotateSpeed; if (fb.pts.length) drawFlat(); }
 };
 (renderer || { setAnimationLoop: (f) => { const t = () => { f(); requestAnimationFrame(t); }; t(); } }).setAnimationLoop(loop);
+
+/* ---- music ---- */
+// Bass, mid and high bands bend the arms: bass pulses the lengths, mids sway the tilt, highs shift the colour, beats kick the phases. Whole-number speeds are left alone, so the curve stays closed.
+const A = { sens: 1.5, motion: 0.8 };
+let actx = null, analyser = null, astream = null, freq = null, asrcNode = null;
+const lev = [0, 0, 0], peak = [0.05, 0.05, 0.05], drift = [], hist = [];
+let kick = 0, lastBeat = 0;
+// the curve straight into a flat array in the fitted view space (no allocation per point), same maths as curve()
+function curveInto(buf, n) {
+  const fr = armFrames(), K = fr.length, c = lastFit.c, kk = lastFit.k;
+  for (let i = 0; i < n; i++) {
+    const t = 2 * Math.PI * i / n;
+    let x = 0, y = 0, z = 0;
+    for (let k = K - 1; k >= 0; k--) {
+      const f = fr[k], a = f.ax, ang = f.w * t, co = Math.cos(ang), si = Math.sin(ang);
+      x += f.d.x; y += f.d.y; z += f.d.z;
+      const dot = (a.x * x + a.y * y + a.z * z) * (1 - co), cx = a.y * z - a.z * y, cy = a.z * x - a.x * z, cz = a.x * y - a.y * x;
+      x = x * co + cx * si + a.x * dot; y = y * co + cy * si + a.y * dot; z = z * co + cz * si + a.z * dot;
+    }
+    buf[3 * i] = (x - c.x) * kk; buf[3 * i + 1] = (y - c.y) * kk; buf[3 * i + 2] = (z - c.z) * kk;
+  }
+  buf[3 * n] = buf[0]; buf[3 * n + 1] = buf[1]; buf[3 * n + 2] = buf[2];
+}
+function liveStep(dt, now) {
+  analyser.getByteFrequencyData(freq);
+  const bw = actx.sampleRate / analyser.fftSize, band = (lo, hi) => { let t = 0, c = 0; for (let b = Math.max(1, Math.round(lo / bw)); b <= Math.min(freq.length - 1, Math.round(hi / bw)); b++) { t += freq[b]; c++; } return c ? t / c / 255 : 0; };
+  const raw = [band(20, 150), band(150, 2000), band(2000, 8000)];
+  raw.forEach((r, j) => {
+    peak[j] = Math.max(r, peak[j] * 0.998);                                 // each band against its own recent loudest, so quiet sources still move
+    const l = peak[j] > 0.04 ? Math.pow(Math.min(1, r / peak[j]), 3 / A.sens) : 0;
+    lev[j] = Math.max(l, lev[j] * Math.pow(0.001, dt));                     // fast attack, release in about a third of a second
+  });
+  hist.push(raw[0]); if (hist.length > 43) hist.shift();
+  const avg = hist.reduce((t, v) => t + v, 0) / hist.length;
+  if (raw[0] > avg * 1.35 && raw[0] > 0.12 && now - lastBeat > 220) { kick = 1; lastBeat = now; }
+  kick *= Math.pow(0.02, dt);
+  const m = A.motion;
+  live = S.arms.map((a, k) => {
+    const j = Math.min(k, 2), sg = k % 2 ? 1 : -1;
+    drift[k] = (drift[k] || 0) + dt * m * (6 + 80 * lev[j]) * sg;
+    return { L: a.L * (1 + m * 0.7 * lev[j]), w: a.w, tilt: a.tilt + m * 35 * (lev[1] - 0.3) * sg, az: a.az + drift[k] * 0.5, ph: a.ph + drift[k] + m * 70 * kick * sg * Math.sqrt(k + 1) };
+  });
+  hueShift += dt * m * (8 + 160 * lev[2]);
+  controls.autoRotateSpeed = 1.5 + 6 * m * lev[1];
+  if (!obj && renderer) return;
+  if (renderer) {
+    const pos = obj.geometry.attributes.position, n = pos.count - 1;
+    curveInto(pos.array, n); pos.needsUpdate = true;
+    if ((frameNo++ & 1) === 0) { obj.geometry.attributes.color.array.set(colours(n + 1)); obj.geometry.attributes.color.needsUpdate = true; }
+  } else {
+    const n = fb.pts.length - 1, buf = liveBuf && liveBuf.length === 3 * (n + 1) ? liveBuf : (liveBuf = new Float32Array(3 * (n + 1)));
+    curveInto(buf, n);
+    for (let i = 0; i <= n; i++) fb.pts[i].set(buf[3 * i], buf[3 * i + 1], buf[3 * i + 2]);
+    if ((frameNo++ & 1) === 0) fb.col = colours(n + 1);
+  }
+}
+let frameNo = 0, liveBuf = null;
+const anote = (t) => { $('anote').textContent = t; };
+async function audioStart() {
+  const kind = $('asrc').value;
+  try {
+    actx = new (window.AudioContext || window.webkitAudioContext)();
+    analyser = actx.createAnalyser(); analyser.fftSize = 2048; analyser.smoothingTimeConstant = 0.6; freq = new Uint8Array(analyser.frequencyBinCount);
+    if (kind === 'file') {
+      const f = $('afile').files[0];
+      if (!f) { anote('Choose an audio file first.'); await actx.close(); actx = null; return; }
+      const aud = $('aud'); aud.src = URL.createObjectURL(f);
+      asrcNode = actx.createMediaElementSource(aud); asrcNode.connect(analyser); analyser.connect(actx.destination);
+      await aud.play().catch(() => {});
+    } else {
+      astream = kind === 'mic'
+        ? await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } })
+        : await navigator.mediaDevices.getDisplayMedia({ video: true, audio: { echoCancellation: false, noiseSuppression: false } });
+      if (!astream.getAudioTracks().length) { astream.getTracks().forEach((t) => t.stop()); astream = null; throw new Error('No audio was shared. Pick a tab and tick "Share tab audio".'); }
+      astream.getVideoTracks().forEach((t) => t.stop());
+      astream.getAudioTracks()[0].addEventListener('ended', audioStop);
+      asrcNode = actx.createMediaStreamSource(astream); asrcNode.connect(analyser);                // not sent to the speakers: the source is already playing
+    }
+    await actx.resume();
+  } catch (e) {
+    anote(e.name === 'NotAllowedError' ? 'Permission was refused.' : String(e.message || e));
+    if (actx) actx.close().catch(() => {}); actx = null; astream = null; return;
+  }
+  audioOn = true; hist.length = 0; peak.fill(0.05); drift.length = 0; kick = 0;
+  $('astart').textContent = 'Stop'; anote('Listening. The view switches to a line while the music plays.');
+  build();
+}
+function audioStop() {
+  if (!audioOn && !actx) return;
+  audioOn = false; live = null; hueShift = 0;
+  if (astream) astream.getTracks().forEach((t) => t.stop());
+  if (actx) actx.close().catch(() => {});
+  $('aud').pause(); actx = analyser = astream = asrcNode = null;
+  controls.autoRotateSpeed = 2;
+  $('astart').textContent = 'Start'; anote('');
+  build();
+}
 
 /* ---- the panel ---- */
 const SL = [['L', 'Length', 0, 3, 0.01], ['w', 'Speed', -300, 300, 1], ['tilt', 'Tilt', 0, 180, 1], ['az', 'Azimuth', 0, 360, 1], ['ph', 'Phase', 0, 360, 1]];
@@ -346,6 +460,15 @@ $('webm').onclick = () => {                                   // one full turn o
 };
 
 if (!renderer) msg('No WebGL here, so this is the flat viewer: drag to turn, scroll to zoom. Tube view and shading need WebGL.');
+const mobile = /Android|iPhone|iPad/.test(navigator.userAgent);
+if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia || mobile) { const o = $('asrc').querySelector('[value=tab]'); o.disabled = true; o.textContent += ' (desktop Chrome or Edge)'; }
+if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { $('asrc').querySelector('[value=mic]').disabled = true; }
+const notes = { mic: 'Play your music on a speaker; the microphone listens to the room.', tab: 'Pick the tab playing Spotify or Apple Music and tick "Share tab audio".', file: 'Choose a file, then Start.' };
+$('asrc').onchange = () => { $('afilebox').classList.toggle('hidden', $('asrc').value !== 'file'); if (!audioOn) anote(notes[$('asrc').value]); };
+$('astart').onclick = () => (audioOn ? audioStop() : audioStart());
+bind($('asens'), () => A.sens, (v) => { A.sens = v; }, () => {});
+bind($('amotion'), () => A.motion, (v) => { A.motion = v; }, () => {});
+anote(notes.mic);
 panel(); build();
 </script>
 </body>
