@@ -494,7 +494,7 @@ if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { $('asrc')
 const notes = { mic: 'Play your music on a speaker; the microphone listens to the room.', tab: 'Pick the tab playing Spotify or Apple Music and tick "Share tab audio".', file: 'Choose a file, then Start.' };
 if (window.SPIRO_SERVER) {                                    // lab only: the server draws the frames and muxes the track
   $('vidbox').classList.remove('hidden');
-  const vnote = (t) => { $('vnote').innerHTML = t; };
+  const vnote = (t, href) => { const n = $('vnote'); n.textContent = t; if (href) { const a = document.createElement('a'); a.href = href; a.textContent = 'Download the MP4'; n.prepend(a); } };
   $('vgo').onclick = async () => {
     const f = $('afile').files[0];
     if (!f) return vnote('Choose Audio file in Music above and pick a track first.');
@@ -506,7 +506,7 @@ if (window.SPIRO_SERVER) {                                    // lab only: the s
       const r = await fetch('/api/jobs', { method: 'POST', body: JSON.stringify({ kind: 'music', audioId: (await up.json()).id, size: +size, fps: +fps, label: name + ' 3D', S, A }) });
       const j = await r.json(); if (!r.ok) throw new Error(j.error);
       for (let st = j; ; st = await (await fetch('/api/jobs/' + j.id)).json()) {
-        if (st.state === 'done') { vnote('<a href="/api/jobs/' + j.id + '/file">Download the MP4</a> (also in the lab\'s job list).'); break; }
+        if (st.state === 'done') { vnote(' (also in the lab\'s job list).', '/api/jobs/' + j.id + '/file'); break; }
         if (st.state === 'error' || st.state === 'cancelled') throw new Error(st.error || st.state);
         vnote((st.state === 'queued' ? 'Queued' : 'Rendering ' + (st.total ? Math.round(100 * st.done / st.total) + '%' : '')) + '. You can leave this page; the job keeps running.');
         await new Promise((ok) => setTimeout(ok, 2000));

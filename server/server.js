@@ -8,7 +8,7 @@ const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
 const zlib = require('zlib');
-const { spawn } = require('child_process');
+const { spawn, execFile } = require('child_process');
 const E = require('./engine');
 const Face = require('./face');
 const nodemailer = require('nodemailer');
@@ -621,7 +621,7 @@ function startJob(b) {
       if (kind === 'music') {
         const side = { 720: [1280, 720], 1080: [1920, 1080] }[Math.round(+b.size)] || [1280, 720], fps = +b.fps === 60 ? 60 : 30, mf = audioFile(b.audioId);
         const m = await require('./music').prepare(mf, b.S && b.A ? { ...b.S, A: b.A } : b, side[0], side[1], fps, path.join(SITE, 'reactive.js'));
-        buf = await ffmpeg(['-s', side[0] + 'x' + side[1], '-r', String(fps), '-i', '-', '-i', mf, '-map', '0:v', '-map', '1:a', '-c:v', 'libx264', '-preset', 'medium', '-crf', '19', '-pix_fmt', 'yuv420p',
+        buf = await ffmpeg(['-s', side[0] + 'x' + side[1], '-r', String(fps), '-i', '-', '-protocol_whitelist', 'file', '-i', mf, '-map', '0:v', '-map', '1:a', '-c:v', 'libx264', '-preset', 'medium', '-crf', '19', '-pix_fmt', 'yuv420p',
           '-c:a', 'aac', '-b:a', '192k', '-t', String(m.count / fps), '-movflags', '+faststart'], { count: m.count, at: m.at }, 'mp4', o);
       } else if (kind === 'batch') {
         const files = [];
@@ -805,6 +805,9 @@ async function api(req, res, url) {
     if (bytes.length < 1000) throw new HttpError(400, 'empty file');
     const id = crypto.randomBytes(6).toString('hex');
     await fs.promises.writeFile(audioFile(id), bytes);
+    // ffmpeg would follow playlists (HLS, concat) to local files or URLs, so only plain audio and video containers are accepted
+    const fmts = await new Promise((ok) => execFile('ffprobe', ['-v', 'error', '-protocol_whitelist', 'file', '-show_entries', 'format=format_name', '-of', 'csv=p=0', audioFile(id)], { timeout: 20e3 }, (e, out) => ok(e ? [] : String(out).trim().split(','))));
+    if (!fmts.length || fmts.some((f) => !['mp3', 'wav', 'ogg', 'flac', 'mov', 'mp4', 'm4a', '3gp', '3g2', 'mj2', 'matroska', 'webm', 'aac', 'aiff', 'caf', 'amr', 'opus'].includes(f))) { fs.rmSync(audioFile(id), { force: true }); throw new HttpError(400, 'not a plain audio file'); }
     for (const f of fs.readdirSync(path.join(DATA, 'audio'))) { const q = path.join(DATA, 'audio', f); if (Date.now() - fs.statSync(q).mtimeMs > 14 * 864e5) fs.rm(q, () => {}); }
     return json(res, 200, { id });
   }

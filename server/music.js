@@ -10,7 +10,7 @@ const SR = 44100, N = 2048;
 // whole track as mono float samples
 function decode(file) {
   return new Promise((resolve, reject) => {
-    const ff = spawn('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-i', file, '-f', 'f32le', '-ac', '1', '-ar', String(SR), '-t', '360', 'pipe:1'], { stdio: ['ignore', 'pipe', 'pipe'] });
+    const ff = spawn('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-protocol_whitelist', 'file', '-i', file, '-f', 'f32le', '-ac', '1', '-ar', String(SR), '-t', '360', 'pipe:1'], { stdio: ['ignore', 'pipe', 'pipe'] });
     const parts = []; let err = '';
     ff.stdout.on('data', (d) => parts.push(d)); ff.stderr.on('data', (d) => { err += d; });
     ff.on('error', reject);
