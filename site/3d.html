@@ -107,7 +107,7 @@ a:hover { color: var(--primary); }
       <section class="widget"><h2 class="widget-header">Music</h2>
         <div class="card">
           <label class="field"><span>Source</span><select id="asrc"><option value="mic">Microphone</option><option value="tab">Tab or system audio</option><option value="file">Audio file</option></select></label>
-          <div id="afilebox" class="hidden" style="margin-top:10px"><input type="file" id="afile" accept="audio/*" class="text" style="padding-top:8px"><audio id="aud" controls style="width:100%;margin-top:8px"></audio></div>
+          <div id="afilebox" class="hidden" style="margin-top:10px"><input type="file" id="afile" class="text" style="padding-top:8px"><audio id="aud" controls style="width:100%;margin-top:8px"></audio></div>
           <label class="row" style="margin-top:6px"><span class="lab">Sensitivity</span><output class="num"></output><input type="range" id="asens" min="0.5" max="3" step="0.1"></label>
           <label class="row"><span class="lab">Motion</span><output class="num"></output><input type="range" id="amotion" min="0" max="1" step="0.05"></label>
           <button type="button" class="btn primary wide" id="astart" style="margin-top:10px;width:100%">Start</button>
@@ -374,6 +374,7 @@ async function audioStart() {
       if (!f) { anote('Choose an audio file first.'); await actx.close(); actx = null; return; }
       const aud = $('aud'); aud.src = URL.createObjectURL(f);
       asrcNode = actx.createMediaElementSource(aud); asrcNode.connect(analyser); analyser.connect(actx.destination);
+      aud.onerror = () => { anote('That file could not be played. Try an mp3, m4a or wav.'); audioStop(); };
       await aud.play().catch(() => {});
     } else {
       astream = kind === 'mic'
