@@ -621,7 +621,7 @@ function startJob(b) {
       if (kind === 'music') {
         const side = { 720: [1280, 720], 1080: [1920, 1080] }[Math.round(+b.size)] || [1280, 720], fps = +b.fps === 60 ? 60 : 30, mf = audioFile(b.audioId);
         const m = await require('./music').prepare(mf, b.S && b.A ? { ...b.S, A: b.A } : b, side[0], side[1], fps, path.join(SITE, 'reactive.js'));
-        buf = await ffmpeg(['-s', side[0] + 'x' + side[1], '-r', String(fps), '-i', '-', '-protocol_whitelist', 'file', '-i', mf, '-map', '0:v', '-map', '1:a', '-c:v', 'libx264', '-preset', 'medium', '-crf', '19', '-pix_fmt', 'yuv420p',
+        buf = await ffmpeg(['-s', side[0] + 'x' + side[1], '-r', String(fps), '-i', '-', '-protocol_whitelist', 'file', '-i', mf, '-map', '0:v', '-map', '1:a', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '19', '-pix_fmt', 'yuv420p',
           '-c:a', 'aac', '-b:a', '192k', '-t', String(m.count / fps), '-movflags', '+faststart'], { count: m.count, at: m.at }, 'mp4', o);
       } else if (kind === 'batch') {
         const files = [];

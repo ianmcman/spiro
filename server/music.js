@@ -98,7 +98,7 @@ async function prepare(audioFile, spec, W, H, fps, reactivePath) {
   const samples = await decode(audioFile), seconds = samples.length / SR;
   if (seconds < 1) throw new Error('the audio is empty');
   const Reactive = require(reactivePath), R = Reactive.create(), analyse = analyser(samples, fps);
-  const n = Math.min(6000, Math.max(1000, Math.round(spec.pts || 6000))), buf = new Float32Array(3 * (n + 1));
+  const n = Math.min(H > 800 ? 6000 : 3500, Math.max(1000, Math.round(spec.pts || 6000))), buf = new Float32Array(3 * (n + 1));
   // the fixed fit: centre and scale from the arms as they are set, like the page's first build
   curveInto(buf, n, frames(spec.arms), [0, 0, 0], 1);
   let lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
@@ -120,7 +120,7 @@ async function prepare(audioFile, spec, W, H, fps, reactivePath) {
       X[i] = W / 2 + x * s; Y[i] = H / 2 - y * s; Z[i] = z;
     }
     g.fillStyle = '#282923'; g.fillRect(0, 0, W, H);
-    const step = 5;
+    const step = Math.ceil(n / 450);
     for (const pass of [0, 1]) {                                // a wide dim pass under a bright core, so the line reads as a lit tube
       g.lineWidth = pass ? core : core * 2.6;
       for (let i = 0; i < n; i += step) {
