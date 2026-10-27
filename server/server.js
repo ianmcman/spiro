@@ -22,7 +22,7 @@ const PUBLIC_URL = (process.env.PUBLIC_URL || '').replace(/\/$/, '');           
 const SMTP = { host: process.env.SMTP_HOST || '', port: +process.env.SMTP_PORT || 587, user: process.env.SMTP_USER || '', pass: process.env.SMTP_PASS || '' };
 const MAIL_FROM = process.env.MAIL_FROM || '', MAIL_TO = process.env.MAIL_TO || '', DAILY_AT = process.env.DAILY_AT || '';   // DAILY_AT: "07:00" in TZ
 const NTFY_URL = process.env.NTFY_URL || '', NTFY_TOKEN = process.env.NTFY_TOKEN || '', HA_WEBHOOK_URL = process.env.HA_WEBHOOK_URL || '';
-for (const d of ['pics', 'designs', 'renders']) fs.mkdirSync(path.join(DATA, d), { recursive: true });
+for (const d of ['pics', 'designs', 'renders', 'audio']) fs.mkdirSync(path.join(DATA, d), { recursive: true });
 const TAU = Math.PI * 2;
 
 /* ---------------------------------------------------------------- small helpers */
@@ -591,13 +591,26 @@ async function notify(j) {
     body: JSON.stringify({ id: j.id, state: j.state, kind: j.kind, fmt: j.fmt, label: j.label, bytes: j.bytes, url: link }) }));
   for (const r of await Promise.allSettled(tasks)) if (r.status === 'rejected' || !r.value.ok) console.error('notify failed', r.reason || r.value.status);
 }
+// Music video: the 3D page's arms and music settings, checked and clamped, plus an uploaded track.
+const AUDIO_ID = /^[0-9a-f]{12}$/, audioFile = (id) => path.join(DATA, 'audio', id + '.bin');
+function musicSpec(b) {
+  if (!AUDIO_ID.test(String(b.audioId)) || !fs.existsSync(audioFile(b.audioId))) throw new HttpError(400, 'upload the track first');
+  const S = b.S || {}, A = b.A || {}, arms = Array.isArray(S.arms) ? S.arms.slice(0, 16) : [];
+  if (!arms.length) throw new HttpError(400, 'no arms');
+  const f = (v, lo, hi, d) => Math.min(hi, Math.max(lo, Number.isFinite(+v) ? +v : d));
+  return { kind: 'music', fmt: 'mp4', audioId: b.audioId, label: b.label, size: b.size, fps: b.fps,
+    S: { hue: f(S.hue, 0, 360, 200), hrange: f(S.hrange, -720, 720, 120), pts: f(S.pts, 1000, 10000, 6000), spin: S.spin !== false,
+      arms: arms.map((a) => ({ L: f(a.L, 0, 5, 1), w: Math.round(f(a.w, -300, 300, 1)), tilt: f(a.tilt, -360, 360, 0), az: f(a.az, -720, 720, 0), ph: f(a.ph, -720, 720, 0) })) },
+    A: { sens: f(A.sens, 0.5, 3, 1), motion: f(A.motion, 0, 1, 0.6) } };
+}
 function startJob(b) {
-  const kind = b.kind === 'batch' ? 'batch' : 'export', fmt = String(b.fmt);
-  if (!(fmt in EXT) || (kind === 'batch' && !['png', 'jpg', 'svg', 'pdf', 'plotter'].includes(fmt))) throw new HttpError(400, 'bad format');
+  if (b.kind === 'music') b = musicSpec(b);
+  const kind = b.kind === 'music' ? 'music' : b.kind === 'batch' ? 'batch' : 'export', fmt = String(b.fmt);
+  if (kind !== 'music' && (!(fmt in EXT) || (kind === 'batch' && !['png', 'jpg', 'svg', 'pdf', 'plotter'].includes(fmt)))) throw new HttpError(400, 'bad format');
   const names = kind === 'batch' ? (Array.isArray(b.names) ? b.names : []).map((x) => String(x).trim()).filter(Boolean).slice(0, 100) : [];
   if (kind === 'batch' && !names.length) throw new HttpError(400, 'no names');
   const o = { long: true, size: b.size, fps: b.fps, seconds: b.seconds, page: String(b.page || 'a4'), margin: b.margin, cmyk: !!b.cmyk, colors: !!b.colors, pen: b.pen };
-  const j = { id: crypto.randomBytes(5).toString('hex'), kind, fmt, label: safeName(b.label || (kind === 'batch' ? 'Batch' : 'Spirograph')), state: 'queued', created: Date.now(), ext: kind === 'batch' ? 'zip' : EXT[fmt], spec: b };
+  const j = { id: crypto.randomBytes(5).toString('hex'), kind, fmt, label: safeName(b.label || (kind === 'batch' ? 'Batch' : 'Spirograph')), state: 'queued', created: Date.now(), ext: kind === 'batch' ? 'zip' : kind === 'music' ? 'mp4' : EXT[fmt], spec: b };
   o.job = j;
   jobs.set(j.id, j); saveJob(j);
   jobChain = jobChain.then(async () => {
@@ -605,7 +618,12 @@ function startJob(b) {
     j.state = 'running'; j.started = Date.now(); saveJob(j);
     try {
       let buf;
-      if (kind === 'batch') {
+      if (kind === 'music') {
+        const side = { 720: [1280, 720], 1080: [1920, 1080] }[Math.round(+b.size)] || [1280, 720], fps = +b.fps === 60 ? 60 : 30, mf = audioFile(b.audioId);
+        const m = await require('./music').prepare(mf, b.S && b.A ? { ...b.S, A: b.A } : b, side[0], side[1], fps, path.join(SITE, 'reactive.js'));
+        buf = await ffmpeg(['-s', side[0] + 'x' + side[1], '-r', String(fps), '-i', '-', '-i', mf, '-map', '0:v', '-map', '1:a', '-c:v', 'libx264', '-preset', 'medium', '-crf', '19', '-pix_fmt', 'yuv420p',
+          '-c:a', 'aac', '-b:a', '192k', '-t', String(m.count / fps), '-movflags', '+faststart'], { count: m.count, at: m.at }, 'mp4', o);
+      } else if (kind === 'batch') {
         const files = [];
         for (const [n, name] of names.entries()) {
           if (j.cancel) throw new HttpError(499, 'cancelled');
@@ -782,6 +800,14 @@ async function api(req, res, url) {
     }
     if (M === 'DELETE' && !m[2]) { for (const e of ['.json', '.jpg']) fs.rmSync(designFile(m[1], e), { force: true }); return json(res, 200, { ok: true }); }
   }
+  if (M === 'POST' && p === '/api/audio') {                           // a track for a music video; kept 14 days so a re-run still has it
+    const bytes = await body(req, 80e6);
+    if (bytes.length < 1000) throw new HttpError(400, 'empty file');
+    const id = crypto.randomBytes(6).toString('hex');
+    await fs.promises.writeFile(audioFile(id), bytes);
+    for (const f of fs.readdirSync(path.join(DATA, 'audio'))) { const q = path.join(DATA, 'audio', f); if (Date.now() - fs.statSync(q).mtimeMs > 14 * 864e5) fs.rm(q, () => {}); }
+    return json(res, 200, { id });
+  }
   if (p === '/api/jobs') {
     if (M === 'GET') return json(res, 200, [...jobs.values()].sort((a, b) => b.created - a.created).map(pubJob));
     if (M === 'POST') return json(res, 200, pubJob(startJob(await jbody(2e6))));
@@ -827,7 +853,7 @@ const server = http.createServer(async (req, res) => {
     let name = decodeURIComponent(url.pathname);
     if (name === '/' || name === '/index.html') return send(res, 200, PAGE(), MIME['.html']);
     if (name === '/robots.txt') return send(res, 200, 'User-agent: *\nDisallow: /\n');
-    if (name === '/3d') return send(res, 200, fs.readFileSync(path.join(SITE, '3d.html'), 'utf8').replace('</head>', '<meta name="robots" content="noindex, nofollow">\n</head>'), MIME['.html']);   // the private build is not indexed
+    if (name === '/3d') return send(res, 200, fs.readFileSync(path.join(SITE, '3d.html'), 'utf8').replace('</head>', '<meta name="robots" content="noindex, nofollow">\n<script>window.SPIRO_SERVER = true;</script>\n</head>'), MIME['.html']);   // the private build is not indexed
     const file = path.normalize(path.join(SITE, name));
     if (!file.startsWith(SITE + path.sep) || name === '/_headers' || name === '/sw.js') throw new HttpError(404, 'not found');
     const data = await fs.promises.readFile(file).catch(() => { throw new HttpError(404, 'not found'); });
