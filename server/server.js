@@ -275,7 +275,7 @@ function ffmpeg(args, frames, ext, o = {}) {
     (async () => {
       for (let f = 0; f < frames.count; f++) {
         if (o.job) { o.job.done = f; o.job.total = frames.count; if (o.job.cancel) { ff.kill('SIGKILL'); return; } }
-        const fr = frames.at(f), px = Buffer.from(fr.buffer, fr.byteOffset, fr.length);
+        const fr = await frames.at(f), px = Buffer.from(fr.buffer, fr.byteOffset, fr.length);
         if (!ff.stdin.write(px)) await new Promise((r) => ff.stdin.once('drain', r));
         await new Promise((r) => setImmediate(r));                      // let other requests run between frames
       }
@@ -621,8 +621,10 @@ function startJob(b) {
       if (kind === 'music') {
         const side = { 720: [1280, 720], 1080: [1920, 1080] }[Math.round(+b.size)] || [1280, 720], fps = +b.fps === 60 ? 60 : 30, mf = audioFile(b.audioId);
         const m = await require('./music').prepare(mf, b.S && b.A ? { ...b.S, A: b.A } : b, side[0], side[1], fps, path.join(SITE, 'reactive.js'));
-        buf = await ffmpeg(['-s', side[0] + 'x' + side[1], '-r', String(fps), '-i', '-', '-protocol_whitelist', 'file', '-i', mf, '-map', '0:v', '-map', '1:a', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '19', '-pix_fmt', 'yuv420p',
-          '-c:a', 'aac', '-b:a', '192k', '-t', String(m.count / fps), '-movflags', '+faststart'], { count: m.count, at: m.at }, 'mp4', o);
+        try {
+          buf = await ffmpeg(['-s', side[0] + 'x' + side[1], '-r', String(fps), '-i', '-', '-protocol_whitelist', 'file', '-i', mf, '-map', '0:v', '-map', '1:a', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '19', '-pix_fmt', 'yuv420p',
+            '-c:a', 'aac', '-b:a', '192k', '-t', String(m.count / fps), '-movflags', '+faststart'], { count: m.count, at: m.at }, 'mp4', o);
+        } finally { m.close(); }
       } else if (kind === 'batch') {
         const files = [];
         for (const [n, name] of names.entries()) {

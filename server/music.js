@@ -3,6 +3,8 @@
 // each frame is drawn with a software 3D projection (a glowing line standing in for the tube), and ffmpeg muxes the picture with the original audio.
 const path = require('path');
 const { spawn } = require('child_process');
+const os = require('os');
+const { Worker, isMainThread, parentPort, workerData } = require('worker_threads');
 const { createCanvas } = require('@napi-rs/canvas');
 
 const SR = 44100, N = 2048;
@@ -92,40 +94,30 @@ function hsl(h, s, l) {                                      // h in 0..1
   return [f(0), f(8), f(4)].map((v) => Math.round(v * 255));
 }
 
-// o: { spec: { arms, hue, hrange, pts, spin, A: { sens, motion } }, W, H, fps, reactivePath }
-// Returns { count, at(f) } for the server's ffmpeg helper, and the track's duration.
-async function prepare(audioFile, spec, W, H, fps, reactivePath) {
-  const samples = await decode(audioFile), seconds = samples.length / SR;
-  if (seconds < 1) throw new Error('the audio is empty');
-  const Reactive = require(reactivePath), R = Reactive.create(), analyse = analyser(samples, fps);
+// Draws one frame from its parameters: { arms, hue, yaw, kick, lev0 }. Pure, so frames can be drawn on any thread in any order.
+function drawer(spec, W, H) {
   const n = Math.min(H > 800 ? 6000 : 3500, Math.max(1000, Math.round(spec.pts || 6000))), buf = new Float32Array(3 * (n + 1));
-  // the fixed fit: centre and scale from the arms as they are set, like the page's first build
-  curveInto(buf, n, frames(spec.arms), [0, 0, 0], 1);
-  let lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+  curveInto(buf, n, frames(spec.arms), [0, 0, 0], 1);                  // the fixed fit: centre and scale from the arms as set
+  const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
   for (let i = 0; i < n; i++) for (let a = 0; a < 3; a++) { const v = buf[3 * i + a]; if (v < lo[a]) lo[a] = v; if (v > hi[a]) hi[a] = v; }
-  const ctr = [0, 1, 2].map((a) => (lo[a] + hi[a]) / 2), ext = Math.max(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]) || 1, A = spec.A;
-  const kk = (100 / ext) / (1 + 0.5 * A.motion);
+  const ctr = [0, 1, 2].map((a) => (lo[a] + hi[a]) / 2), ext = Math.max(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]) || 1;
+  const kk = (115 / ext) / (1 + 0.5 * spec.A.motion);
   const cv = createCanvas(W, H), g = cv.getContext('2d'), pitch = Math.atan2(60, 180), cp = Math.cos(pitch), sp = Math.sin(pitch), D = Math.hypot(60, 180), focal = (H / 2) / Math.tan(20 * Math.PI / 180);
-  const X = new Float32Array(n + 1), Y = new Float32Array(n + 1), Z = new Float32Array(n + 1);
-  let yaw = 0.6;
-  const core = Math.max(1.5, H / 230 * 0.9 * 1.2);
-  g.lineCap = 'round'; g.lineJoin = 'round';
-  const at = (f) => {
-    const t = f / fps, out = R.step(analyse(t), 1 / fps, t * 1000, spec.arms, A);
-    if (spec.spin) yaw += (1 / fps) * (2 * Math.PI / 60) * out.rotSpeed;
-    curveInto(buf, n, frames(out.arms), ctr, kk);
-    const cy = Math.cos(yaw), sy = Math.sin(yaw);
+  const X = new Float32Array(n + 1), Y = new Float32Array(n + 1), Z = new Float32Array(n + 1), core = Math.max(1.5, H / 230 * 0.9 * 1.2), step = Math.ceil(n / 450);
+  g.lineCap = 'butt'; g.lineJoin = 'round';
+  return (p) => {
+    const zoom = kk * (1 + 0.15 * p.kick + 0.08 * p.lev0), cy = Math.cos(p.yaw), sy = Math.sin(p.yaw);   // the whole curve breathes with the bass and punches on beats
+    curveInto(buf, n, frames(p.arms), ctr, zoom);
     for (let i = 0; i <= n; i++) {
       const px = buf[3 * i], py = buf[3 * i + 1], pz = buf[3 * i + 2], x = px * cy + pz * sy, z0 = -px * sy + pz * cy, y = py * cp - z0 * sp, z = py * sp + z0 * cp, s = focal / (D - z);
       X[i] = W / 2 + x * s; Y[i] = H / 2 - y * s; Z[i] = z;
     }
     g.fillStyle = '#282923'; g.fillRect(0, 0, W, H);
-    const step = Math.ceil(n / 450);
     for (const pass of [0, 1]) {                                // a wide dim pass under a bright core, so the line reads as a lit tube
-      g.lineWidth = pass ? core : core * 2.6;
+      g.lineWidth = (pass ? core : core * 2.6) * (1 + 0.7 * p.kick);
       for (let i = 0; i < n; i += step) {
-        const e = Math.min(n, i + step), [r, gg, b] = hsl((((spec.hue + out.hueShift + spec.hrange * i / n) % 360) + 360) % 360 / 360, 0.75, pass ? 0.6 : 0.45), depth = Math.min(1, Math.max(0.3, 0.45 + 0.55 * (Z[i] + 60) / 120));
-        g.strokeStyle = 'rgba(' + r + ',' + gg + ',' + b + ',' + (pass ? depth : depth * 0.28) + ')';
+        const e = Math.min(n, i + step), [r, gg, b] = hsl((((p.hue + spec.hrange * i / n) % 360) + 360) % 360 / 360, 0.75, Math.min(0.85, (pass ? 0.6 : 0.45) + 0.2 * p.kick)), depth = Math.min(1, Math.max(0.3, 0.45 + 0.55 * (Z[i] + 60) / 120));
+        g.strokeStyle = 'rgba(' + r + ',' + gg + ',' + b + ',' + (pass ? depth : depth * (0.28 + 0.3 * p.kick)) + ')';
         g.beginPath(); g.moveTo(X[i], Y[i]);
         for (let j = i + 1; j <= e; j++) g.lineTo(X[j], Y[j]);
         g.stroke();
@@ -133,7 +125,42 @@ async function prepare(audioFile, spec, W, H, fps, reactivePath) {
     }
     return g.getImageData(0, 0, W, H).data;
   };
-  return { count: Math.floor(seconds * fps), at, seconds };
+}
+
+if (!isMainThread && workerData && workerData.music) {
+  const draw = drawer(workerData.spec, workerData.W, workerData.H);
+  parentPort.on('message', ({ f, p }) => { const px = Buffer.from(draw(p)); parentPort.postMessage({ f, px }, [px.buffer]); });
+}
+
+// Returns { count, at(f) -> Promise<RGBA>, seconds, close() } for the server's ffmpeg helper.
+// The audio is analysed in order first (cheap); the drawing, which is the slow part, runs on one worker thread per spare core.
+async function prepare(audioFile, spec, W, H, fps, reactivePath) {
+  const samples = await decode(audioFile), seconds = samples.length / SR;
+  if (seconds < 1) throw new Error('the audio is empty');
+  const R = require(reactivePath).create({ attack: 0.05, release: 0.06, kickDecay: 0.08 }), analyse = analyser(samples, fps), count = Math.floor(seconds * fps), params = [];
+  let yaw = 0.6;
+  for (let f = 0; f < count; f++) {
+    const t = f / fps, out = R.step(analyse(t), 1 / fps, t * 1000, spec.arms, spec.A);
+    if (spec.spin) yaw += (1 / fps) * (2 * Math.PI / 60) * out.rotSpeed;
+    params.push({ arms: out.arms, hue: spec.hue + out.hueShift, yaw, kick: out.kick, lev0: out.lev[0] });
+  }
+  const nw = Math.max(1, Math.min(8, os.cpus().length - 1)), pool = [], waiting = new Map(), ahead = new Map();
+  for (let i = 0; i < nw; i++) {
+    const w = new Worker(__filename, { workerData: { music: true, spec, W, H } });
+    w.busy = 0;
+    w.on('message', ({ f, px }) => { w.busy--; const r = waiting.get(f); waiting.delete(f); r.resolve(new Uint8Array(px.buffer, px.byteOffset, px.length)); });
+    w.on('error', (e) => { for (const r of waiting.values()) r.reject(e); waiting.clear(); });
+    pool.push(w);
+  }
+  const ask = (f) => {
+    const w = pool.reduce((a, b) => (b.busy < a.busy ? b : a)); w.busy++;
+    return new Promise((resolve, reject) => { waiting.set(f, { resolve, reject }); w.postMessage({ f, p: params[f] }); });
+  };
+  const at = (f) => {
+    for (let k = f; k < Math.min(count, f + 2 * nw); k++) if (!ahead.has(k)) ahead.set(k, ask(k));
+    const p = ahead.get(f); ahead.delete(f); return p;
+  };
+  return { count, at, seconds, close: () => Promise.all(pool.map((w) => w.terminate())) };
 }
 
 module.exports = { prepare };
