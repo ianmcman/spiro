@@ -37,6 +37,31 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="Spirograph">
 <meta name="apple-mobile-web-app-status-bar-style" content="black">
+<script src="/theme.js"></script>
+<script>
+(() => {
+  const mql = window.matchMedia('(prefers-color-scheme: dark)');
+  window.__applyTheme = function () {
+    let s; try { s = localStorage; } catch (_) {}
+    const p = SpiroTheme.loadPrefs(s);
+    const id = SpiroTheme.resolveThemeId(p.theme, mql.matches);
+    const v = SpiroTheme.themeVars(id, p.accent);
+    const r = document.documentElement;
+    for (const k in v) r.style.setProperty(k, v[k]);
+    const m = document.querySelector('meta[name="theme-color"]');
+    if (m) m.setAttribute('content', SpiroTheme.metaColor(id));
+    return { prefs: p, themeId: id };
+  };
+  window.__applyTheme();
+  mql.addEventListener('change', () => {
+    let s; try { s = localStorage; } catch (_) {}
+    if (SpiroTheme.loadPrefs(s).theme === 'system') {
+      window.__applyTheme();
+      if (window.__onThemeChange) window.__onThemeChange();
+    }
+  });
+})();
+</script>
 <style>
 /* Dynacat (Glance) look with its Monokai theme: bg 70 8% 15%, contrast 1.1, primary 190 81% 67% */
 @font-face { font-family: 'JetBrains Mono'; font-style: normal; font-weight: 400; font-display: swap; src: url('JetBrainsMono-Regular.woff2') format('woff2'); }
@@ -87,7 +112,7 @@ body:not(.open) .panel { display: none; }
 .field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .field > span, .note { font-size: 1.2rem; color: var(--text-sub); }
 .note { margin: 10px 0 0; }
-.ink { margin-bottom: 10px; }
+.ink, .theme-field { margin-bottom: 10px; }
 .hidden { display: none !important; }
 .panel:not(.name-mode) .name-only, .panel.name-mode .spiro-only, .panel:not(.image-mode) .image-only, .panel.image-mode .name-only { display: none; }
 #mode { grid-template-columns: repeat(3, 1fr); }
@@ -459,6 +484,14 @@ body:not(.open) .fab { display: block; }
       <section class="widget" data-tab="look">
         <h2 class="widget-header">Appearance</h2>
         <div class="card">
+          <label class="field theme-field"><span>Theme</span><select id="theme">
+            <option value="system">System</option>
+            <option value="monokai">Monokai</option>
+            <option value="midnight">Midnight</option>
+            <option value="highcontrast">High contrast</option>
+            <option value="light">Light</option>
+          </select></label>
+          <div class="swatches" id="accents" role="group" aria-label="Accent palette"></div>
           <label class="field ink"><span>Ink</span><select id="ink"></select></label>
           <div class="swatches" id="swatches" role="group" aria-label="Ink palette"></div>
           <label class="row" id="row-hue"><span class="lab">Colour offset</span><input type="range" id="hue" min="0" max="360" step="1"><input class="num" id="o-hue" type="text" inputmode="decimal" autocomplete="off" spellcheck="false" aria-label="Colour offset value"></label>

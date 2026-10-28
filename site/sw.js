@@ -1,7 +1,7 @@
 // Offline copy for the home-screen app: network first (so deploys show up at once), cache as the fallback.
-const CACHE = 'spiro-v2';
+const CACHE = 'spiro-v3';
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(['/', 'JetBrainsMono-Regular.woff2', 'favicon.svg', 'icon-192.png'])));
+  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(['/', 'JetBrainsMono-Regular.woff2', 'favicon.svg', 'icon-192.png', 'theme.js'])));
   self.skipWaiting();
 });
 self.addEventListener('activate', (e) => e.waitUntil(self.clients.claim()));

@@ -8,6 +8,27 @@
 <meta name="description" content="Free 3D spirograph. Chain turning arms in 3D, orbit the curve, and save a PNG, a printable STL or a turntable video. No sign-up.">
 <link rel="canonical" href="https://spiro.ianmcmanus.net/3d">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<script src="/theme.js"></script>
+<script>
+(() => {
+  const mql = window.matchMedia('(prefers-color-scheme: dark)');
+  function apply() {
+    let s; try { s = localStorage; } catch (_) {}
+    const p = SpiroTheme.loadPrefs(s);
+    const id = SpiroTheme.resolveThemeId(p.theme, mql.matches);
+    const v = SpiroTheme.themeVars(id, p.accent);
+    const r = document.documentElement;
+    for (const k in v) r.style.setProperty(k, v[k]);
+    const m = document.querySelector('meta[name="theme-color"]');
+    if (m) m.setAttribute('content', SpiroTheme.metaColor(id));
+  }
+  apply();
+  mql.addEventListener('change', () => {
+    let s; try { s = localStorage; } catch (_) {}
+    if (SpiroTheme.loadPrefs(s).theme === 'system') apply();
+  });
+})();
+</script>
 <style>
 @font-face { font-family: 'JetBrains Mono'; font-style: normal; font-weight: 400; font-display: swap; src: url('/JetBrainsMono-Regular.woff2') format('woff2'); }
 :root {
