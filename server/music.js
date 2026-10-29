@@ -105,6 +105,14 @@ function drawer(spec, W, H) {
   const cv = createCanvas(W, H), g = cv.getContext('2d'), pitch = Math.atan2(60, 180), cp = Math.cos(pitch), sp = Math.sin(pitch), D = Math.hypot(60, 180), focal = (H / 2) / Math.tan(20 * Math.PI / 180);
   const X = new Float32Array(n + 1), Y = new Float32Array(n + 1), Z = new Float32Array(n + 1), core = Math.max(1.5, H / 230 * 0.9 * 1.2), step = Math.ceil(n / 450);
   g.lineCap = 'butt'; g.lineJoin = 'round';
+  // Tubes: a lit sphere stamped at every curve sample, drawn far to near, so a run of them reads as a shaded tube with correct overlaps.
+  const NB = 144, sprites = [], tube = spec.look !== 'line', order = new Uint32Array(n);
+  if (tube) for (let b = 0; b < NB; b++) {
+    const c = createCanvas(64, 64), q = c.getContext('2d'), h = b / NB, col = (l, s) => 'rgb(' + hsl(h, s, l).join(',') + ')', gr = q.createRadialGradient(22, 20, 2, 32, 32, 31);
+    gr.addColorStop(0, col(0.92, 0.5)); gr.addColorStop(0.18, col(0.7, 0.8)); gr.addColorStop(0.6, col(0.45, 0.8)); gr.addColorStop(1, col(0.15, 0.75));
+    q.fillStyle = gr; q.beginPath(); q.arc(32, 32, 31, 0, 2 * Math.PI); q.fill(); sprites.push(c);
+  }
+  const rad = (spec.tubeR || 1.3) / 100 * 115 / 1.15;           // tube radius in scene units (the curve is fitted to about 115 across)
   return (p) => {
     const zoom = kk * (1 + 0.15 * p.kick + 0.08 * p.lev0), cy = Math.cos(p.yaw), sy = Math.sin(p.yaw);   // the whole curve breathes with the bass and punches on beats
     curveInto(buf, n, frames(p.arms), ctr, zoom);
@@ -113,6 +121,16 @@ function drawer(spec, W, H) {
       X[i] = W / 2 + x * s; Y[i] = H / 2 - y * s; Z[i] = z;
     }
     g.fillStyle = '#282923'; g.fillRect(0, 0, W, H);
+    if (tube) {
+      for (let i = 0; i < n; i++) order[i] = i;
+      order.sort((a, b) => Z[a] - Z[b]);
+      const rr = rad * (1 + 0.5 * p.kick);
+      for (let k = 0; k < n; k++) {
+        const i = order[k], r = rr * focal / (D - Z[i]), b = Math.floor((((p.hue + spec.hrange * i / n) % 360) + 360) % 360 / 360 * NB) % NB;
+        g.drawImage(sprites[b], X[i] - r, Y[i] - r, 2 * r, 2 * r);
+      }
+      return g.getImageData(0, 0, W, H).data;
+    }
     for (const pass of [0, 1]) {                                // a wide dim pass under a bright core, so the line reads as a lit tube
       g.lineWidth = (pass ? core : core * 2.6) * (1 + 0.7 * p.kick);
       for (let i = 0; i < n; i += step) {

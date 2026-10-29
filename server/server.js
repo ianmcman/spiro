@@ -598,7 +598,7 @@ function musicSpec(b) {
   const S = b.S || {}, A = b.A || {}, arms = Array.isArray(S.arms) ? S.arms.slice(0, 16) : [];
   if (!arms.length) throw new HttpError(400, 'no arms');
   const f = (v, lo, hi, d) => Math.min(hi, Math.max(lo, Number.isFinite(+v) ? +v : d));
-  return { kind: 'music', fmt: 'mp4', audioId: b.audioId, label: b.label, size: b.size, fps: b.fps,
+  return { kind: 'music', fmt: 'mp4', audioId: b.audioId, look: b.look === 'line' ? 'line' : 'tube', label: b.label, size: b.size, fps: b.fps,
     S: { hue: f(S.hue, 0, 360, 200), hrange: f(S.hrange, -720, 720, 120), pts: f(S.pts, 1000, 10000, 6000), spin: S.spin !== false,
       arms: arms.map((a) => ({ L: f(a.L, 0, 5, 1), w: Math.round(f(a.w, -300, 300, 1)), tilt: f(a.tilt, -360, 360, 0), az: f(a.az, -720, 720, 0), ph: f(a.ph, -720, 720, 0) })) },
     A: { sens: f(A.sens, 0.5, 3, 1), motion: f(A.motion, 0, 1, 0.6) } };
@@ -620,7 +620,7 @@ function startJob(b) {
       let buf;
       if (kind === 'music') {
         const side = { 720: [1280, 720], 1080: [1920, 1080] }[Math.round(+b.size)] || [1280, 720], fps = +b.fps === 60 ? 60 : 30, mf = audioFile(b.audioId);
-        const m = await require('./music').prepare(mf, b.S && b.A ? { ...b.S, A: b.A } : b, side[0], side[1], fps, path.join(SITE, 'reactive.js'));
+        const m = await require('./music').prepare(mf, b.S && b.A ? { ...b.S, A: b.A, look: b.look } : b, side[0], side[1], fps, path.join(SITE, 'reactive.js'));
         try {
           buf = await ffmpeg(['-s', side[0] + 'x' + side[1], '-r', String(fps), '-i', '-', '-protocol_whitelist', 'file', '-i', mf, '-map', '0:v', '-map', '1:a', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '19', '-pix_fmt', 'yuv420p',
             '-c:a', 'aac', '-b:a', '192k', '-t', String(m.count / fps), '-movflags', '+faststart'], { count: m.count, at: m.at }, 'mp4', o);
