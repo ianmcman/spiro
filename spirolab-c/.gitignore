@@ -1,0 +1,5 @@
+*.o
+spirolab
+models/*.onnx
+*.spiro
+*.spiro3d

@@ -1,0 +1,14 @@
+[Desktop Entry]
+Type=Application
+Name=SpiroLab
+Comment=Draw gears, names and pictures locally
+Exec="@APP_DIR@/run.sh"
+Icon=@APP_DIR@/icon.svg
+Terminal=false
+Categories=Graphics;2DGraphics;3DGraphics;
+StartupWMClass=spirolab
+Actions=3D;
+
+[Desktop Action 3D]
+Name=3D Spirograph
+Exec="@APP_DIR@/run.sh" --3d
