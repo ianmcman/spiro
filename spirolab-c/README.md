@@ -67,7 +67,7 @@ Click **3D Spiro** in the main toolbar, or launch it directly:
 
 ![Native 3D spirograph](docs/3d.png)
 
-- **1,000–128,000 samples**, with 32,000 by default. Increase **Samples** and press **Apply arms** for finer curves. Higher counts take longer to generate and export; a 128,000-sample STL has 3,072,000 triangles (about 154 MB).
+- **1,000–4,000,000 samples**, with 32,000 by default. Increase **Samples** and press **Apply arms** for finer curves. Higher counts take longer to generate and export; a 4,000,000-sample STL has 96,000,000 triangles (about 4.8 GB).
 - One to sixteen chained arms, each with length, signed integer speed, tilt, azimuth and phase. Press **Apply arms** after editing the arm table.
 - **Line** and shaded **Tube** views, automatic orbit, an optional arm-chain overlay, randomization, playback and replay.
 - Drag to orbit; Shift-drag, middle-drag or right-drag to pan; mouse wheel to zoom at the pointer. **Fit** recentres the curve. Space plays/pauses, R replays, F finishes, and 0 fits.
@@ -87,7 +87,7 @@ The design filename is optional for headless exports; omitting it uses the defau
 
 ### GPU rendering
 
-[Hardware pressure-test results](docs/3d-pressure-test.md): tested up to eight million points in a disposable build; one to two million remained practical on the RTX 4070 SUPER, while multi-million-point tubes eventually developed stalls. The production limit remains 128,000.
+[Hardware pressure-test results](docs/3d-pressure-test.md): tested up to eight million points in a disposable build; one to two million remained practical on the RTX 4070 SUPER, while multi-million-point tubes eventually developed stalls. The production limit is 4,000,000; 32,000 remains the default.
 
 The interactive 3D window uses OpenGL 3.3 through GTK's GL area. Curve and tube buffers are uploaded when their geometry changes. Orbiting, panning, zooming, hue changes and playback reuse those buffers; the GPU performs projection, smooth lighting and depth testing. Animation follows the display frame clock. Hardware rendering uses the full selected mesh and up to four-sample antialiasing.
 

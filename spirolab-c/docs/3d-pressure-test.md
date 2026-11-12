@@ -1,6 +1,6 @@
 # 3D rendering pressure test — 2026-11-11
 
-Tested the native OpenGL viewer on an RTX 4070 SUPER (12 GB), i7-12700F and 46 GiB RAM. Hardware acceleration was active. The normal application remains limited to 128,000 points, with 32,000 by default. Tests raised the bound only in disposable source copies.
+Tested the native OpenGL viewer on an RTX 4070 SUPER (12 GB), i7-12700F and 46 GiB RAM. Hardware acceleration was active. The application now permits 4,000,000 points, with 32,000 by default. These measurements were taken before that increase, using disposable source copies.
 
 ## Results
 
@@ -25,7 +25,7 @@ Total VRAM climbed from about 1.4 GiB at 128,000 points to 5.7 GiB at seven mill
 
 ## Practical limits
 
-One million points is a conservative interactive target on this PC. Two million remained below the 16.7 ms frame budget for 60 Hz in this test, but introduces about a second of synchronous tube construction. Four million approaches that budget; five to seven million show stalls; eight million is clearly too slow. More complicated designs, larger windows, other GPU workloads and different drivers can change these thresholds. The current 128,000-point cap has substantial rendering headroom.
+One million points is a conservative interactive target on this PC. Two million remained below the 16.7 ms frame budget for 60 Hz in this test, but introduces about a second of synchronous tube construction. Four million approaches that budget; five to seven million show stalls; eight million is clearly too slow. More complicated designs, larger windows, other GPU workloads and different drivers can change these thresholds. The user selected 4,000,000 as the production maximum after reviewing these results.
 
 Line rendering remained fast even at eight million points. These are rendering results; exporting multi-million-point STL files was not stress-tested. STL uses 24 triangles per point at twelve tube sides, approximately 1,200 bytes per point in the output file: one million points would produce about 1.2 GB. Render headroom alone is therefore insufficient reason to expose the same maximum to every workflow.
 

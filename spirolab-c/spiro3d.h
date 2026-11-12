@@ -4,7 +4,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #define SP3_MAX_ARMS 16
-#define SP3_MAX_SAMPLES 128000
+#define SP3_MAX_SAMPLES 4000000
 typedef struct {
     double x, y, z;
 } Sp3Vec;

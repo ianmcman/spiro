@@ -26,6 +26,8 @@ int main(void) {
     v.zoom = NAN;
     assert(!sp3_save("/tmp/spirolab-3d-invalid.spiro3d", &c, &v, &e));
     g_clear_error(&e);
+    /* Keep disk-export fixtures small; persistence above covers the maximum. */
+    c.samples = 128000;
     v = sp3_default_view();
     Sp3Curve curve = {0};
     assert(sp3_curve(&c, &curve));
