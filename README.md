@@ -20,7 +20,7 @@ One HTML file, no dependencies, no build step, no tracking, no server-side state
 
 [SpiroLab for Linux](spirolab-c/README.md) runs locally in C11 with GTK3, Cairo and OpenGL. It includes 2D gear drawing with inside/outside second wheels, text/image tracing up to 2,097,152 Fourier circles and 8192-pixel detail, layers, PNG/SVG/PDF exports, local face drawing and subject cutout, plus 3D spirographs with up to 4,000,000 samples, line/tube views, camera controls and STL export.
 
-The 3D viewer caches geometry in OpenGL buffers for smooth orbiting, panning and zooming. Its status bar identifies hardware acceleration or software rendering; Cairo is available as a fallback. See the [GPU rendering notes](spirolab-c/README.md#gpu-rendering) for driver diagnostics and validation.
+The native 2D canvas and 3D viewer cache geometry in OpenGL buffers for smooth panning, zooming and orbiting. Native text and drawing settings refresh live after a short typing delay. Its status bar identifies hardware acceleration or software rendering; Cairo is available as a fallback. See the [GPU rendering notes](spirolab-c/README.md#gpu-rendering) for driver diagnostics and validation.
 
 ![Native C 3D viewer](spirolab-c/docs/gpu3d.png)
 

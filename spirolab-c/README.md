@@ -42,14 +42,14 @@ Repeat this step if you move the checkout. The launcher also provides a **3D Spi
 - PNG at 2048 pixels, vector SVG, and A4 PDF. Exports contain the complete design, including kept layers.
 - `.spiro` files preserve layers, actual ink, playback position, settings, Fourier coefficients, and embedded source/prepared pictures. Invalid files leave the current document intact. Saves use an atomic replacement. A file is limited to 512 MiB and 8,388,610 total points across the current curve and kept layers.
 
-**Draw** applies the current settings. Presets and Shuffle draw immediately. **Keep layer** freezes the current curve and makes room for another. The shape sliders do not silently replace your drawing as you adjust them.
+Settings refresh the drawing automatically after a 250 ms pause in typing or moving a control. Text updates as you type; switching tabs updates the current mode. Changes made during a background trace replace the pending request, and stale results are discarded. Live updates show the complete curve; **Draw** or Enter in the text field restarts animated playback. Presets and Shuffle draw immediately. **Keep layer** freezes the current curve and makes room for another.
 
 ## Faces and subject cutout
 
 1. Select **Picture** and **Open image**.
 2. Choose **Remove background**, **Subject outline**, **Face drawing**, or **Face + subject outline**.
-3. Press **Prepare image**. The preview and status show the result.
-4. Press **Draw** to trace it, or **Save PNG** to keep the processed picture. Removed backgrounds remain transparent in the saved PNG.
+3. Preparation and tracing start automatically. The preview and status show the result; **Prepare image** can rerun preparation explicitly.
+4. Press **Draw** to replay the trace, or **Save PNG** to keep the processed picture. Removed backgrounds remain transparent in the saved PNG.
 
 Face tools start at 8192 circles and 512-pixel detail; adjust those controls if desired. Preparation and tracing run in the background. Images are processed locally and are never uploaded. Large input pictures are reduced to at most 8192 pixels on their longer side. Change the tool to return to the original picture; processing always starts from that original. AI preparation uses at most 4096 pixels; ordinary tracing can use the full 8192-pixel source.
 
@@ -104,10 +104,15 @@ This display-dependent test reports the actual renderer and redraw timing, verif
 
 ## High-resolution 2D
 
-The limits above were tested on this PC rather than copied from the web version. [Measurements and renderer comparison](docs/2d-pressure-test.md) cover the maximum-size FFT, text tracing, rendering and saved-document roundtrip. Maximum settings can take several seconds to prepare and require large files. Defaults stay modest. The interactive Cairo preview skips subpixel segments and uses coarser rainbow colour grouping at high point counts; saves and exports keep full curve geometry. A separate planar OpenGL benchmark is much faster, but the production 2D canvas still uses Cairo.
+![Live text on the GPU canvas with its Fourier overlay](docs/gpu2d.png)
+
+The limits above were tested on this PC rather than copied from the web version. [Measurements and renderer comparison](docs/2d-pressure-test.md) cover the maximum-size FFT, text tracing, rendering and saved-document roundtrip. Maximum settings can take several seconds to prepare and require large files. Defaults stay modest. The interactive 2D canvas now uses OpenGL 3.3 with cached stroke buffers, round caps/joins, actual line widths, rainbow ink, pen lifts and transparent layers. Pan/zoom, playback and colour/width changes reuse the geometry. Wheel/Fourier overlays remain available. Animation follows the display frame clock. The status bar identifies the renderer; initialization/allocation failures fall back to Cairo. Force that fallback with `SPIROLAB_SOFTWARE_2D=1 ./run.sh`. PNG/SVG/PDF exports retain full curve geometry through Cairo.
+
+On this RTX 4070 SUPER, the integrated 4,194,305-point stroke renderer measured about 3.6 ms per pan frame, with an initial upload/draw around 47 ms. These timings include completed GPU work and exclude desktop presentation latency. The earlier thin-line prototype timings in the comparison report describe a different rendering path.
 
 ```sh
 ./tests/high-resolution.sh
+./tests/desktop-gpu.sh   # Requires a desktop OpenGL session
 ```
 
 ## Controls

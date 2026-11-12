@@ -1,5 +1,6 @@
 #include "ai.h"
 #include "document.h"
+#include "gpu2d.h"
 #include "image.h"
 #include "viewer3d.h"
 #include <gtk/gtk.h>
@@ -9,9 +10,10 @@
 
 typedef struct {
     SpDocument doc;
-    GtkWidget *window, *sidebar, *actions, *canvas, *status, *progress, *notebook, *play;
-    GtkWidget *shape[2], *teeth[2], *outside, *pen, *rotation, *second, *second_options, *second_outside, *ratio,
-        *second_speed;
+    GtkWidget *window, *sidebar, *actions, *canvas, *gpu, *software, *viewport, *status, *progress,
+        *notebook, *play;
+    GtkWidget *shape[2], *teeth[2], *outside, *pen, *rotation, *second, *second_options,
+        *second_outside, *ratio, *second_speed;
     GtkWidget *text, *terms, *harmonics, *detail, *threshold, *tool, *preview, *image_name, *color,
         *rainbow, *width, *speed, *overlay;
     SpViewTransform view;
@@ -20,12 +22,15 @@ typedef struct {
     gboolean dirty, playing, busy, closing, dragging, syncing;
     double last_x, last_y, animation_speed;
     gint64 last_tick;
-    guint timer;
+    guint timer, live_timer;
+    guint64 revision;
+    gboolean live_enabled, draw_pending, live_request, gpu_active;
     char *model_dir;
 } App;
 typedef struct {
     App *app;
-    gboolean prepare;
+    gboolean prepare, live;
+    guint64 revision;
     SpParams params;
     SpInk ink;
     int mode, terms, detail, tool, faces;
@@ -40,9 +45,48 @@ typedef struct {
 static void draw_action(GtkWidget *, gpointer);
 static void fit_action(GtkWidget *, gpointer);
 static void sync_controls(App *);
+static void schedule_live(App *);
+static gboolean live_draw(gpointer);
+static void start_job(App *, gboolean);
+static void ready_status(App *);
+static void queue_canvas(App *a) {
+    if (a->gpu_active) {
+        gboolean overlay = a->doc.current.path.count &&
+                           gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(a->overlay));
+        sp2_gpu_scene(a->gpu, a->doc.layers, a->doc.layer_count, &a->doc.current, a->doc.progress,
+                      &a->view, overlay && a->doc.drawn_mode == 0 ? &a->doc.drawn_params : NULL,
+                      overlay && a->doc.drawn_mode != 0 ? &a->doc.fourier : NULL);
+    } else if (a->canvas)
+        gtk_widget_queue_draw(a->canvas);
+}
+static void stop_pending(App *a) {
+    a->revision++;
+    a->draw_pending = FALSE;
+    if (a->live_timer) {
+        g_source_remove(a->live_timer);
+        a->live_timer = 0;
+    }
+}
+static void geometry_changed(App *a) {
+    if (a->gpu)
+        sp2_gpu_geometry_changed(a->gpu);
+}
+static void gpu_notice(GtkWidget *area, gpointer data) {
+    App *a = data;
+    Sp2GpuStats stats;
+    sp2_gpu_stats(area, &stats);
+    a->gpu_active = stats.ready && g_strcmp0(g_getenv("SPIROLAB_SOFTWARE_2D"), "1");
+    a->canvas = a->gpu_active ? a->gpu : a->software;
+    gtk_stack_set_visible_child(GTK_STACK(a->viewport), a->canvas);
+    gtk_widget_set_tooltip_text(a->viewport, stats.error[0] ? stats.error : NULL);
+    a->dirty = TRUE;
+    queue_canvas(a);
+    if (!a->busy)
+        ready_status(a);
+}
 static void invalidate(App *a) {
     a->dirty = TRUE;
-    gtk_widget_queue_draw(a->canvas);
+    queue_canvas(a);
 }
 static void message(App *a, const char *s) {
     gtk_label_set_text(GTK_LABEL(a->status), s);
@@ -57,14 +101,20 @@ static void play_label(App *a) {
     gtk_button_set_label(GTK_BUTTON(a->play), a->playing ? "Pause" : "Play");
 }
 static void ready_status(App *a) {
-    char *s = g_strdup_printf("%zu kept layers · %zu points · %.0f%% zoom", a->doc.layer_count,
+    Sp2GpuStats stats = {0};
+    if (a->gpu)
+        sp2_gpu_stats(a->gpu, &stats);
+    char *s = g_strdup_printf("%s%s · %zu kept layers · %zu points · %.0f%% zoom",
+                              a->gpu_active ? (stats.hardware ? "GPU · " : "OpenGL software · ")
+                                            : "Cairo software",
+                              a->gpu_active ? stats.renderer : "", a->doc.layer_count,
                               a->doc.current.path.count, a->view.zoom * 100);
     message(a, s);
     g_free(s);
 }
 static void set_busy(App *a, gboolean busy) {
     a->busy = busy;
-    gtk_widget_set_sensitive(a->sidebar, !busy);
+    /* Controls remain editable; an in-flight job owns immutable snapshots. */
     gtk_widget_set_sensitive(a->actions, !busy);
     gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(a->progress), a->doc.progress);
 }
@@ -125,6 +175,7 @@ static void mode_changed(GtkNotebook *n, GtkWidget *page, guint index, gpointer 
         return;
     a->doc.mode = (int)index;
     gtk_widget_set_visible(a->harmonics, index != 0);
+    schedule_live(a);
 }
 static void second_changed(GtkWidget *w, gpointer data) {
     (void)w;
@@ -208,13 +259,18 @@ static gboolean tick(gpointer data) {
     if (a->playing && a->doc.current.path.count) {
         a->doc.progress = MIN(1., a->doc.progress + dt * a->animation_speed / 10.);
         gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(a->progress), a->doc.progress);
-        gtk_widget_queue_draw(a->canvas);
+        queue_canvas(a);
         if (a->doc.progress >= 1) {
             a->playing = FALSE;
             play_label(a);
         }
     }
     return G_SOURCE_CONTINUE;
+}
+static gboolean frame_tick(GtkWidget *widget, GdkFrameClock *clock, gpointer data) {
+    (void)widget;
+    (void)clock;
+    return tick(data);
 }
 static void fit_action(GtkWidget *w, gpointer data) {
     (void)w;
@@ -324,7 +380,15 @@ static gboolean job_done(gpointer data) {
         return G_SOURCE_REMOVE;
     }
     set_busy(a, FALSE);
+    if (j->revision != a->revision) {
+        job_free(j);
+        if (a->draw_pending && !a->live_timer)
+            live_draw(a);
+        return G_SOURCE_REMOVE;
+    }
+    gboolean success = j->error == NULL;
     if (j->error) {
+        a->draw_pending = FALSE;
         report(a, j->prepare ? "Image processing failed" : "Drawing failed",
                g_steal_pointer(&j->error));
     } else if (j->prepare) {
@@ -332,27 +396,31 @@ static gboolean job_done(gpointer data) {
         a->doc.prepared = g_steal_pointer(&j->result_image);
         preview(a);
         char *s =
-            j->faces ? g_strdup_printf("Prepared locally · %d faces detected. Press Draw to trace.",
-                                       j->faces)
-                     : g_strdup("Prepared locally. Press Draw to trace, or save the PNG.");
+            j->faces
+                ? g_strdup_printf("Prepared locally · %d faces detected. Tracing now.", j->faces)
+                : g_strdup("Prepared locally. Tracing now; the processed PNG can also be saved.");
         message(a, s);
         g_free(s);
     } else {
+        geometry_changed(a);
         render_layer_free(&a->doc.current);
         sp_fourier_free(&a->doc.fourier);
         a->doc.fourier = j->fourier;
         j->fourier = (SpFourier){0};
-        a->doc.current = (SpLayer){j->path, j->ink, 1, j->pen_down};
+        a->doc.current = (SpLayer){j->path, a->doc.ink, 1, j->pen_down};
         j->pen_down = NULL;
         j->path = (SpPath){0};
         a->doc.drawn_params = j->params;
         a->doc.drawn_mode = j->mode;
-        a->doc.progress = 0;
-        a->playing = TRUE;
+        a->doc.progress = j->live ? 1 : 0;
+        a->playing = !j->live;
         play_label(a);
         fit_action(NULL, a);
     }
+    gboolean prepare_done = j->prepare && success;
     job_free(j);
+    if ((a->draw_pending || prepare_done) && !a->live_timer)
+        live_draw(a);
     return G_SOURCE_REMOVE;
 }
 static gpointer work(gpointer data) {
@@ -362,14 +430,18 @@ static gpointer work(gpointer data) {
         if (ai) {
             int W = gdk_pixbuf_get_width(j->image), H = gdk_pixbuf_get_height(j->image);
             double scale = MIN(1., 4096. / MAX(W, H));
-            GdkPixbuf *input = scale < 1 ? gdk_pixbuf_scale_simple(j->image,
-                MAX(1, (int)round(W * scale)), MAX(1, (int)round(H * scale)), GDK_INTERP_BILINEAR)
-                : g_object_ref(j->image);
+            GdkPixbuf *input =
+                scale < 1
+                    ? gdk_pixbuf_scale_simple(j->image, MAX(1, (int)round(W * scale)),
+                                              MAX(1, (int)round(H * scale)), GDK_INTERP_BILINEAR)
+                    : g_object_ref(j->image);
             if (input) {
-                j->result_image = sp_ai_apply(ai, input, (SpAiMode)(j->tool - 1), &j->faces, &j->error);
+                j->result_image =
+                    sp_ai_apply(ai, input, (SpAiMode)(j->tool - 1), &j->faces, &j->error);
                 g_object_unref(input);
             } else
-                g_set_error(&j->error, G_FILE_ERROR, G_FILE_ERROR_NOMEM, "Cannot resize inference input");
+                g_set_error(&j->error, G_FILE_ERROR, G_FILE_ERROR_NOMEM,
+                            "Cannot resize inference input");
             sp_ai_free(ai);
         }
     } else if (j->mode == 0) {
@@ -383,8 +455,15 @@ static gpointer work(gpointer data) {
     return NULL;
 }
 static void start_job(App *a, gboolean prepare) {
-    if (a->busy)
+    if (a->busy) {
+        a->draw_pending = TRUE;
         return;
+    }
+    if (a->live_timer) {
+        g_source_remove(a->live_timer);
+        a->live_timer = 0;
+    }
+    a->draw_pending = FALSE;
     collect(a);
     if ((prepare || a->doc.mode == 2) && !a->doc.source) {
         message(a, "Choose a picture first.");
@@ -403,6 +482,9 @@ static void start_job(App *a, gboolean prepare) {
     Job *j = g_new0(Job, 1);
     j->app = a;
     j->prepare = prepare;
+    j->revision = a->revision;
+    j->live = a->live_request;
+    a->live_request = FALSE;
     j->params = a->doc.params;
     j->ink = a->doc.ink;
     j->mode = a->doc.mode;
@@ -422,9 +504,58 @@ static void start_job(App *a, gboolean prepare) {
     GThread *t = g_thread_new("spirolab-work", work, j);
     g_thread_unref(t);
 }
+static gboolean live_draw(gpointer data) {
+    App *a = data;
+    a->live_timer = 0;
+    if (a->closing)
+        return G_SOURCE_REMOVE;
+    if (a->busy) {
+        a->draw_pending = TRUE;
+        return G_SOURCE_REMOVE;
+    }
+    collect(a);
+    if (a->doc.mode == 1 && !*a->doc.text) {
+        geometry_changed(a);
+        render_layer_free(&a->doc.current);
+        sp_fourier_free(&a->doc.fourier);
+        a->doc.progress = 0;
+        a->playing = FALSE;
+        a->draw_pending = FALSE;
+        play_label(a);
+        invalidate(a);
+        message(a, "Type text to draw it live.");
+        return G_SOURCE_REMOVE;
+    }
+    if (a->doc.mode == 2 && !a->doc.source)
+        return G_SOURCE_REMOVE;
+    a->live_request = TRUE;
+    gboolean prepare = a->doc.mode == 2 && a->doc.tool != 0 && !a->doc.prepared;
+    start_job(a, prepare);
+    if (prepare)
+        a->draw_pending = TRUE;
+    return G_SOURCE_REMOVE;
+}
+static void style_changed(App *a) {
+    if (!a->live_enabled || a->syncing || a->closing)
+        return;
+    collect(a);
+    a->doc.current.ink = a->doc.ink;
+    queue_canvas(a);
+}
+static void schedule_live(App *a) {
+    if (!a->live_enabled || a->syncing || a->closing)
+        return;
+    a->revision++;
+    a->draw_pending = TRUE;
+    if (a->live_timer)
+        g_source_remove(a->live_timer);
+    a->live_timer = g_timeout_add(250, live_draw, a);
+}
 static void draw_action(GtkWidget *w, gpointer p) {
     (void)w;
-    start_job(p, FALSE);
+    App *a = p;
+    a->revision++;
+    start_job(a, FALSE);
 }
 static void prepare_action(GtkWidget *w, gpointer p) {
     (void)w;
@@ -447,7 +578,8 @@ static void image_open(GtkWidget *w, gpointer data) {
     g_clear_object(&a->doc.prepared);
     a->doc.source = p;
     preview(a);
-    message(a, "Picture loaded locally. Choose a tool, then Prepare image or Draw.");
+    message(a, "Picture loaded locally.");
+    schedule_live(a);
 }
 static void tool_changed(GtkComboBox *w, gpointer data) {
     (void)w;
@@ -501,7 +633,7 @@ static void finish_action(GtkWidget *w, gpointer data) {
     a->doc.progress = 1;
     play_label(a);
     gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(a->progress), 1);
-    gtk_widget_queue_draw(a->canvas);
+    queue_canvas(a);
 }
 static void keep_action(GtkWidget *w, gpointer data) {
     (void)w;
@@ -512,6 +644,8 @@ static void keep_action(GtkWidget *w, gpointer data) {
         message(a, "All 32 layers are in use. Undo a layer before adding another.");
         return;
     }
+    stop_pending(a);
+    geometry_changed(a);
     a->doc.layers[a->doc.layer_count++] = a->doc.current;
     a->doc.current = (SpLayer){0};
     sp_fourier_free(&a->doc.fourier);
@@ -524,6 +658,7 @@ static void keep_action(GtkWidget *w, gpointer data) {
 static void undo_action(GtkWidget *w, gpointer data) {
     (void)w;
     App *a = data;
+    geometry_changed(a);
     if (a->doc.layer_count)
         render_layer_free(&a->doc.layers[--a->doc.layer_count]);
     invalidate(a);
@@ -532,6 +667,8 @@ static void undo_action(GtkWidget *w, gpointer data) {
 static void clear_action(GtkWidget *w, gpointer data) {
     (void)w;
     App *a = data;
+    stop_pending(a);
+    geometry_changed(a);
     sp_document_clear(&a->doc);
     a->playing = FALSE;
     play_label(a);
@@ -542,6 +679,7 @@ static void clear_action(GtkWidget *w, gpointer data) {
 static void open_design(GtkWidget *w, gpointer data) {
     (void)w;
     App *a = data;
+    stop_pending(a);
     char *f = choose(a, "Open design", FALSE, NULL);
     if (!f)
         return;
@@ -549,6 +687,7 @@ static void open_design(GtkWidget *w, gpointer data) {
     if (!sp_document_load(&a->doc, f, &e))
         report(a, "Cannot open design", e);
     else {
+        geometry_changed(a);
         a->playing = FALSE;
         play_label(a);
         sync_controls(a);
@@ -635,7 +774,7 @@ static void shuffle_action(GtkWidget *w, gpointer data) {
 static void changed_redraw(GtkWidget *w, gpointer data) {
     (void)w;
     App *a = data;
-    gtk_widget_queue_draw(a->canvas);
+    queue_canvas(a);
 }
 static void speed_changed(GtkRange *w, gpointer data) {
     App *a = data;
@@ -697,6 +836,10 @@ static gboolean close_event(GtkWidget *w, GdkEvent *e, gpointer data) {
     (void)e;
     App *a = data;
     a->closing = TRUE;
+    if (a->live_timer) {
+        g_source_remove(a->live_timer);
+        a->live_timer = 0;
+    }
     a->playing = FALSE;
     gtk_widget_hide(a->window);
     if (!a->busy)
@@ -845,7 +988,7 @@ static void build_ui(App *a) {
     gtk_entry_set_max_length(GTK_ENTRY(a->text), 80);
     gtk_entry_set_placeholder_text(GTK_ENTRY(a->text), "A name or a short message");
     gtk_box_pack_start(GTK_BOX(t), a->text, FALSE, FALSE, 0);
-    GtkWidget *hint = gtk_label_new("The rotating circles follow the letter strokes.");
+    GtkWidget *hint = gtk_label_new("Text updates as you type. Enter or Draw starts playback.");
     gtk_label_set_line_wrap(GTK_LABEL(hint), TRUE);
     gtk_box_pack_start(GTK_BOX(t), hint, FALSE, FALSE, 0);
     GtkWidget *pr = row(p);
@@ -888,19 +1031,31 @@ static void build_ui(App *a) {
     g_signal_connect(a->speed, "value-changed", G_CALLBACK(speed_changed), a);
     GtkWidget *right = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
     gtk_paned_pack2(GTK_PANED(paned), right, TRUE, FALSE);
-    a->canvas = gtk_drawing_area_new();
-    gtk_widget_set_hexpand(a->canvas, TRUE);
-    gtk_widget_set_vexpand(a->canvas, TRUE);
-    gtk_widget_set_can_focus(a->canvas, TRUE);
-    gtk_widget_add_events(a->canvas, GDK_SCROLL_MASK | GDK_SMOOTH_SCROLL_MASK |
-                                         GDK_BUTTON_PRESS_MASK | GDK_BUTTON_RELEASE_MASK |
-                                         GDK_POINTER_MOTION_MASK);
-    g_signal_connect(a->canvas, "draw", G_CALLBACK(canvas_draw), a);
-    g_signal_connect(a->canvas, "scroll-event", G_CALLBACK(scroll_event), a);
-    g_signal_connect(a->canvas, "button-press-event", G_CALLBACK(button_event), a);
-    g_signal_connect(a->canvas, "button-release-event", G_CALLBACK(button_event), a);
-    g_signal_connect(a->canvas, "motion-notify-event", G_CALLBACK(motion_event), a);
-    gtk_box_pack_start(GTK_BOX(right), a->canvas, TRUE, TRUE, 0);
+    a->viewport = gtk_stack_new();
+    gtk_stack_set_homogeneous(GTK_STACK(a->viewport), TRUE);
+    a->software = gtk_drawing_area_new();
+    a->gpu = sp2_gpu_new(gpu_notice, a);
+    a->gpu_active = g_strcmp0(g_getenv("SPIROLAB_SOFTWARE_2D"), "1") != 0;
+    a->canvas = a->gpu_active ? a->gpu : a->software;
+    gtk_stack_add_named(GTK_STACK(a->viewport), a->gpu, "opengl");
+    gtk_stack_add_named(GTK_STACK(a->viewport), a->software, "cairo");
+    gtk_stack_set_visible_child(GTK_STACK(a->viewport), a->canvas);
+    GtkWidget *canvases[] = {a->software, a->gpu};
+    for (size_t i = 0; i < G_N_ELEMENTS(canvases); i++) {
+        GtkWidget *canvas = canvases[i];
+        gtk_widget_set_hexpand(canvas, TRUE);
+        gtk_widget_set_vexpand(canvas, TRUE);
+        gtk_widget_set_can_focus(canvas, TRUE);
+        gtk_widget_add_events(canvas, GDK_SCROLL_MASK | GDK_SMOOTH_SCROLL_MASK |
+                                          GDK_BUTTON_PRESS_MASK | GDK_BUTTON_RELEASE_MASK |
+                                          GDK_POINTER_MOTION_MASK);
+        g_signal_connect(canvas, "scroll-event", G_CALLBACK(scroll_event), a);
+        g_signal_connect(canvas, "button-press-event", G_CALLBACK(button_event), a);
+        g_signal_connect(canvas, "button-release-event", G_CALLBACK(button_event), a);
+        g_signal_connect(canvas, "motion-notify-event", G_CALLBACK(motion_event), a);
+    }
+    g_signal_connect(a->software, "draw", G_CALLBACK(canvas_draw), a);
+    gtk_box_pack_start(GTK_BOX(right), a->viewport, TRUE, TRUE, 0);
     a->progress = gtk_progress_bar_new();
     gtk_box_pack_start(GTK_BOX(right), a->progress, FALSE, FALSE, 0);
     a->status = gtk_label_new("Ready");
@@ -912,6 +1067,25 @@ static void build_ui(App *a) {
     g_signal_connect(a->notebook, "switch-page", G_CALLBACK(mode_changed), a);
     gtk_widget_show_all(a->window);
     sync_controls(a);
+    GtkWidget *changed[] = {a->shape[0], a->shape[1], a->tool};
+    for (size_t i = 0; i < G_N_ELEMENTS(changed); i++)
+        g_signal_connect_swapped(changed[i], "changed", G_CALLBACK(schedule_live), a);
+    GtkWidget *spins[] = {a->teeth[0], a->teeth[1], a->terms, a->detail};
+    for (size_t i = 0; i < G_N_ELEMENTS(spins); i++)
+        g_signal_connect_swapped(spins[i], "value-changed", G_CALLBACK(schedule_live), a);
+    GtkWidget *ranges[] = {a->pen, a->rotation, a->ratio, a->second_speed, a->threshold};
+    for (size_t i = 0; i < G_N_ELEMENTS(ranges); i++)
+        g_signal_connect_swapped(ranges[i], "value-changed", G_CALLBACK(schedule_live), a);
+    GtkWidget *toggles[] = {a->outside, a->second, a->second_outside};
+    for (size_t i = 0; i < G_N_ELEMENTS(toggles); i++)
+        g_signal_connect_swapped(toggles[i], "toggled", G_CALLBACK(schedule_live), a);
+    g_signal_connect_swapped(a->text, "changed", G_CALLBACK(schedule_live), a);
+    g_signal_connect(a->text, "activate", G_CALLBACK(draw_action), a);
+    g_signal_connect_swapped(a->color, "color-set", G_CALLBACK(style_changed), a);
+    g_signal_connect_swapped(a->rainbow, "toggled", G_CALLBACK(style_changed), a);
+    g_signal_connect_swapped(a->width, "value-changed", G_CALLBACK(style_changed), a);
+    g_signal_connect_swapped(a->overlay, "toggled", G_CALLBACK(queue_canvas), a);
+    a->live_enabled = TRUE;
     gtk_widget_grab_focus(a->canvas);
 }
 static char *default_models(void) {
@@ -1063,9 +1237,9 @@ int main(int argc, char **argv) {
     } else
         draw_action(NULL, &a);
     a.last_tick = g_get_monotonic_time();
-    a.timer = g_timeout_add(33, tick, &a);
+    a.timer = gtk_widget_add_tick_callback(a.viewport, frame_tick, &a, NULL);
     gtk_main();
-    g_source_remove(a.timer);
+    gtk_widget_remove_tick_callback(a.viewport, a.timer);
     gtk_widget_destroy(a.window);
     if (a.cache)
         cairo_surface_destroy(a.cache);

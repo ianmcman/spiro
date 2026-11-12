@@ -36,7 +36,7 @@ A prototype passes the identical reconstructed planar points to the existing 3D 
 | 2,097,153 | 111.17 ms | 0.445 ms | 29.51 ms |
 | 4,194,305 | 111.42 ms | 0.862 ms | 59.94 ms |
 
-This comparison uses a 758×762 viewport and excludes GTK input latency/compositor presentation. It demonstrates substantial GPU headroom, but is not a completed 2D GPU implementation: disconnected strokes, kept layers, opacity and stroke-width matching still need adaptation and validation. The production 2D viewport remains Cairo. OpenGL is the preferred next step for interactive drawing; Cairo continues to serve vector/PDF exports and fallback rendering.
+This comparison uses a 758×762 viewport and excludes GTK input latency/compositor presentation. It demonstrates substantial GPU headroom, but is not a completed 2D GPU implementation: disconnected strokes, kept layers, opacity and stroke-width matching still need adaptation and validation. The prototype was subsequently integrated as a dedicated 2D stroke renderer; see the integration results below. Cairo continues to serve vector/PDF exports and fallback rendering.
 
 Raw timings: [2d-pressure-results.txt](2d-pressure-results.txt). Benchmark sources: `tests/2d-pressure.c` and `tests/flat-gpu-pressure.c`. The former accepts FFT size and detail as arguments; the latter requires a hardware OpenGL desktop session and runs a fixed increasing-size comparison.
 
@@ -46,3 +46,10 @@ Raw timings: [2d-pressure-results.txt](2d-pressure-results.txt). Benchmark sourc
 ./tests/pressure2d.sh --gpu           # Planar hardware OpenGL comparison; requires a display
 ./tests/high-resolution.sh            # Maximum-data saved-document roundtrip
 ```
+
+
+## Production desktop integration
+
+The desktop now uses dedicated OpenGL instanced stroke quads, rather than the prototype's thin 3D line. It supports the full selected width, round caps/joins, fragment antialiasing, pen lifts, rainbow colours, layer order, transparent joins and composited Cairo overlays. Integrated testing measured 46.81 ms for initial upload/draw and 3.64 ms per changing-view frame at 4,194,305 points. ASan/UBSan runs measured 3.71 ms per frame; sanitizer timings are not used as the performance baseline. Pan/zoom/style/playback tests verify unchanged upload counts.
+
+`tests/desktop-gpu.sh` runs pixel checks plus asynchronous live-edit regressions. Forced Cairo and unavailable-GL checks also passed. Live edits use a 250 ms debounce, immutable worker snapshots, stale-result rejection and one latest pending request. The maximum tracing limits remain unchanged.
