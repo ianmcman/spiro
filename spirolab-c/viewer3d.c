@@ -549,7 +549,7 @@ GtkWidget *sp3_window(GtkWindow *parent, const SpPath *source) {
     gtk_box_pack_start(GTK_BOX(side), w->arms, FALSE, FALSE, 0);
     w->hue = spin_row(side, "Starting hue", 0, 360, 1, 0);
     w->range = spin_row(side, "Hue range", 0, 360, 1, 0);
-    w->samples = spin_row(side, "Samples", 1000, 32000, 1000, 0);
+    w->samples = spin_row(side, "Samples", 1000, SP3_MAX_SAMPLES, 1000, 0);
     w->mm = spin_row(side, "Curve size · mm", 1, 1000, 1, 1);
     w->radius = spin_row(side, "Tube radius · mm", .05, 20, .05, 2);
     GtkWidget *speed_label = gtk_label_new("Playback speed");

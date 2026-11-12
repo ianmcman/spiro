@@ -117,6 +117,19 @@ int main(void) {
     assert(sp3_curve(&c, &curve));
     assert(!sp3_mesh(&curve, 80, 1.2, 12, &mesh));
     sp3_curve_free(&curve);
+    c = sp3_defaults();
+    c.samples = SP3_MAX_SAMPLES + 1;
+    assert(!sp3_valid(&c));
+    c.samples = SP3_MAX_SAMPLES;
+    assert(sp3_curve(&c, &curve));
+    assert(curve.count == SP3_MAX_SAMPLES + 1);
+    assert(sp3_mesh(&curve, 80, 1.2, 12, &mesh));
+    assert(mesh.triangle_count == (size_t)SP3_MAX_SAMPLES * 24);
+    assert(sp3_stl(&mesh, &bytes, &length));
+    assert(length == 84 + 50 * mesh.triangle_count && u32(bytes + 80) == mesh.triangle_count);
+    free(bytes);
+    sp3_mesh_free(&mesh);
+    sp3_curve_free(&curve);
     SpPoint circle[257];
     for (int i = 0; i <= 256; i++)
         circle[i] = (SpPoint){cos(2 * PI * i / 256), sin(2 * PI * i / 256)};

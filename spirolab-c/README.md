@@ -67,6 +67,7 @@ Click **3D Spiro** in the main toolbar, or launch it directly:
 
 ![Native 3D spirograph](docs/3d.png)
 
+- **1,000–128,000 samples**, with 32,000 by default. Increase **Samples** and press **Apply arms** for finer curves. Higher counts take longer to generate and export; a 128,000-sample STL has 3,072,000 triangles (about 154 MB).
 - One to sixteen chained arms, each with length, signed integer speed, tilt, azimuth and phase. Press **Apply arms** after editing the arm table.
 - **Line** and shaded **Tube** views, automatic orbit, an optional arm-chain overlay, randomization, playback and replay.
 - Drag to orbit; Shift-drag, middle-drag or right-drag to pan; mouse wheel to zoom at the pointer. **Fit** recentres the curve. Space plays/pauses, R replays, F finishes, and 0 fits.

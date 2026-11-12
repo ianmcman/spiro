@@ -7,12 +7,13 @@ int main(void) {
     Sp3View v = sp3_default_view(), restored = v;
     v.yaw = 1.7;
     v.zoom = 1.3;
+    c.samples = SP3_MAX_SAMPLES;
     c.tube = 1;
     c.show_arms = 1;
     GError *e = NULL;
     assert(sp3_save("/tmp/spirolab-3d-test.spiro3d", &c, &v, &e));
     assert(sp3_load("/tmp/spirolab-3d-test.spiro3d", &loaded, &restored, &e));
-    assert(loaded.arm_count == 3 && loaded.tube && loaded.show_arms && loaded.arms[2].speed == -9 &&
+    assert(loaded.samples == SP3_MAX_SAMPLES && loaded.arm_count == 3 && loaded.tube && loaded.show_arms && loaded.arms[2].speed == -9 &&
            restored.yaw == v.yaw && restored.zoom == v.zoom);
     GKeyFile *k = g_key_file_new();
     assert(g_key_file_load_from_file(k, "/tmp/spirolab-3d-test.spiro3d", 0, &e));

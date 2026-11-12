@@ -42,7 +42,7 @@ static void frames(const Sp3Config *c, Sp3Vec axis[16], Sp3Vec direction[16]) {
 }
 Sp3Config sp3_defaults(void) {
     Sp3Config c = {.arm_count = 3,
-                   .samples = 8000,
+                   .samples = 32000,
                    .hue = 190,
                    .hue_range = 240,
                    .size_mm = 80,
@@ -272,8 +272,8 @@ int sp3_stl(const Sp3Mesh *m, unsigned char **bytes, size_t *size) {
         return 0;
     *bytes = NULL;
     *size = 0;
-    if (!m || !m->vertices || !m->indices || !m->triangle_count || m->triangle_count > 2048000 ||
-        m->vertex_count > 1024000)
+    if (!m || !m->vertices || !m->indices || !m->triangle_count || m->triangle_count > (size_t)SP3_MAX_SAMPLES * 32 * 2 ||
+        m->vertex_count > (size_t)SP3_MAX_SAMPLES * 32)
         return 0;
     size_t length = 84 + m->triangle_count * 50;
     unsigned char *b = calloc(length, 1);

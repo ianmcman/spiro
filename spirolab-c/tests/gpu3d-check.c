@@ -134,19 +134,23 @@ static gboolean check(gpointer data) {
     assert(found);
     cairo_surface_destroy(png);
     c = sp3_defaults();
-    c.samples = 32000;
+    c.samples = SP3_MAX_SAMPLES;
     c.tube = TRUE;
     c.spin = FALSE;
     assert(replace(w, c));
     sync_widgets(w);
     frame(w);
     sp3_gpu_stats(w->gpu, &a);
-    for (int i = 0; i < 5; i++) {
+    assert(gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(w->samples)) == SP3_MAX_SAMPLES);
+    gint64 max_start = g_get_monotonic_time();
+    for (int i = 0; i < 20; i++) {
         w->view.yaw += .02;
         frame(w);
     }
     sp3_gpu_stats(w->gpu, &b);
     assert(b.tube_uploads == a.tube_uploads);
+    printf("%d-point tube orbit: %.2f ms/frame; geometry uploads unchanged\n",
+           SP3_MAX_SAMPLES, (g_get_monotonic_time() - max_start) / 20000.);
     gtk_window_resize(GTK_WINDOW(w->window), 1500, 940);
     gdk_display_sync(gtk_widget_get_display(w->window));
     while (gtk_events_pending())
