@@ -87,6 +87,8 @@ The design filename is optional for headless exports; omitting it uses the defau
 
 ### GPU rendering
 
+[Hardware pressure-test results](docs/3d-pressure-test.md): tested up to eight million points in a disposable build; one to two million remained practical on the RTX 4070 SUPER, while multi-million-point tubes eventually developed stalls. The production limit remains 128,000.
+
 The interactive 3D window uses OpenGL 3.3 through GTK's GL area. Curve and tube buffers are uploaded when their geometry changes. Orbiting, panning, zooming, hue changes and playback reuse those buffers; the GPU performs projection, smooth lighting and depth testing. Animation follows the display frame clock. Hardware rendering uses the full selected mesh and up to four-sample antialiasing.
 
 The status bar identifies the active renderer. **GPU · NVIDIA…** means hardware acceleration is active; **OpenGL software · llvmpipe…** means the driver is using the CPU. Software OpenGL uses a lighter tube preview and two-sample antialiasing. STL geometry is unchanged. PNG/headless exports remain available independently through Cairo.

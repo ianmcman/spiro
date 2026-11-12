@@ -1,0 +1,62 @@
+GENERATE n=128000 ms=6.388
+LINE n=128000 median_ms=0.062 p95_ms=0.081 max_ms=0.245 rss_peak_MiB=228.0 uploads=2/0
+TUBE_BUILD_UPLOAD n=128000 ms=65.267
+TUBE n=128000 median_ms=0.797 p95_ms=0.829 max_ms=1.014 rss_peak_MiB=418.4 uploads=2/1
+VRAM n=128000 1453 MiB, 34.37
+GENERATE n=256000 ms=12.490
+LINE n=256000 median_ms=0.087 p95_ms=0.103 max_ms=0.309 rss_peak_MiB=178.7 uploads=2/0
+TUBE_BUILD_UPLOAD n=256000 ms=128.417
+TUBE n=256000 median_ms=1.800 p95_ms=1.989 max_ms=2.041 rss_peak_MiB=559.5 uploads=2/1
+VRAM n=256000 1539 MiB, 35.11
+GENERATE n=512000 ms=25.657
+LINE n=512000 median_ms=0.139 p95_ms=0.167 max_ms=0.353 rss_peak_MiB=204.3 uploads=2/0
+TUBE_BUILD_UPLOAD n=512000 ms=254.450
+TUBE n=512000 median_ms=4.366 p95_ms=4.585 max_ms=4.661 rss_peak_MiB=958.2 uploads=2/1
+VRAM n=512000 1704 MiB, 35.30
+GENERATE n=1000000 ms=49.974
+LINE n=1000000 median_ms=0.208 p95_ms=0.225 max_ms=0.402 rss_peak_MiB=239.7 uploads=2/0
+TUBE_BUILD_UPLOAD n=1000000 ms=496.611
+TUBE n=1000000 median_ms=7.853 p95_ms=8.158 max_ms=8.193 rss_peak_MiB=1718.7 uploads=2/1
+VRAM n=1000000 2015 MiB, 37.75
+GENERATE n=2000000 ms=98.535
+LINE n=2000000 median_ms=0.330 p95_ms=0.339 max_ms=0.509 rss_peak_MiB=316.6 uploads=2/0
+TUBE_BUILD_UPLOAD n=2000000 ms=986.080
+TUBE n=2000000 median_ms=12.270 p95_ms=12.509 max_ms=12.554 rss_peak_MiB=3193.1 uploads=2/1
+VRAM n=2000000 2644 MiB, 38.51
+GENERATE n=4000000 ms=197.106
+LINE n=4000000 median_ms=0.632 p95_ms=0.663 max_ms=0.836 rss_peak_MiB=469.6 uploads=2/0
+TUBE_BUILD_UPLOAD n=4000000 ms=2000.228
+TUBE n=4000000 median_ms=14.614 p95_ms=16.532 max_ms=16.630 rss_peak_MiB=6222.4 uploads=2/1
+VRAM n=4000000 3897 MiB, 39.91
+GENERATE n=8000000 ms=426.789
+LINE n=8000000 median_ms=1.421 p95_ms=1.630 max_ms=1.751 rss_peak_MiB=775.1 uploads=2/0
+TUBE_BUILD_UPLOAD n=8000000 ms=4586.478
+TUBE n=8000000 median_ms=180.223 p95_ms=181.161 max_ms=182.343 rss_peak_MiB=16674.6 uploads=2/1
+VRAM n=8000000 4208 MiB, 37.72
+GENERATE n=5000000 ms=245.217
+LINE n=5000000 median_ms=0.936 p95_ms=1.025 max_ms=1.144 rss_peak_MiB=546.4 uploads=2/0
+TUBE_BUILD_UPLOAD n=5000000 ms=2517.437
+TUBE n=5000000 median_ms=15.605 p95_ms=17.369 max_ms=50.562 rss_peak_MiB=7737.3 uploads=2/1
+VRAM n=5000000 4542 MiB, 41.40
+GENERATE n=6000000 ms=299.678
+LINE n=6000000 median_ms=1.027 p95_ms=1.217 max_ms=1.234 rss_peak_MiB=621.6 uploads=2/0
+TUBE_BUILD_UPLOAD n=6000000 ms=3071.446
+TUBE n=6000000 median_ms=16.363 p95_ms=65.841 max_ms=67.364 rss_peak_MiB=9250.6 uploads=2/1
+VRAM n=6000000 5172 MiB, 42.14
+GENERATE n=7000000 ms=347.595
+LINE n=7000000 median_ms=1.229 p95_ms=1.421 max_ms=1.442 rss_peak_MiB=700.1 uploads=2/0
+TUBE_BUILD_UPLOAD n=7000000 ms=12897.837
+TUBE n=7000000 median_ms=16.943 p95_ms=17.300 max_ms=167.821 rss_peak_MiB=10767.1 uploads=2/1
+VRAM n=7000000 5798 MiB, 42.82
+REPEAT
+GENERATE n=6000000 ms=300.072
+LINE n=6000000 median_ms=1.160 p95_ms=1.350 max_ms=1.400 rss_peak_MiB=622.0 uploads=2/0
+TUBE_BUILD_UPLOAD n=6000000 ms=3317.960
+TUBE n=6000000 median_ms=16.269 p95_ms=122.549 max_ms=123.239 rss_peak_MiB=9251.1 uploads=2/1
+VRAM n=6000000 5184 MiB, 42.36
+REPEAT
+GENERATE n=8000000 ms=401.210
+LINE n=8000000 median_ms=1.428 p95_ms=1.622 max_ms=1.665 rss_peak_MiB=774.8 uploads=2/0
+TUBE_BUILD_UPLOAD n=8000000 ms=4578.394
+TUBE n=8000000 median_ms=180.315 p95_ms=180.782 max_ms=181.002 rss_peak_MiB=16674.3 uploads=2/1
+VRAM n=8000000 4238 MiB, 39.34
