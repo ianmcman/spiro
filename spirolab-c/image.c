@@ -142,8 +142,8 @@ int sp_build_trace(int mode, const char *text, GdkPixbuf *image, int detail, dou
         *pen_down = NULL;
     if (fourier)
         *fourier = (SpFourier){0};
-    if (!out || (mode != 1 && mode != 2) || detail < 32 || detail > 512 || terms < 2 ||
-        terms > 16384 || !isfinite(threshold) || threshold < .01 || threshold > 1) {
+    if (!out || (mode != 1 && mode != 2) || detail < 32 || detail > SP_MAX_DETAIL || terms < 2 ||
+        terms > (int)SP_MAX_TERMS || !isfinite(threshold) || threshold < .01 || threshold > 1) {
         g_set_error(error, IMAGE_ERROR, 1, "Invalid tracing settings");
         return 0;
     }
@@ -167,7 +167,7 @@ int sp_build_trace(int mode, const char *text, GdkPixbuf *image, int detail, dou
             }
     double join_limit = 3.0 * 1.7 / MAX(1, MAX(x1 - x0, y1 - y0));
     size_t n = 2048;
-    while (n < (size_t)terms && n < 16384)
+    while (n < (size_t)terms && n < SP_MAX_TERMS)
         n *= 2;
     if (!sp_fourier(&path, n, &f) || !sp_synthesize(&f, (size_t)terms, 2 * n + 1, out))
         goto done;

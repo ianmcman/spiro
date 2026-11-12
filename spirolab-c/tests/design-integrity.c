@@ -7,6 +7,10 @@ int main(void) {
     SpDocument state, restored;
     sp_document_init(&state);
     sp_document_init(&restored);
+    state.params.second = state.params.second_outside = 1;
+    state.drawn_params = state.params;
+    state.terms = 131072;
+    state.detail = SP_MAX_DETAIL;
     state.current.ink = state.ink;
     state.current.ink.r = 1;
     state.current.ink.g = 0;
@@ -46,6 +50,8 @@ int main(void) {
     assert(!strcmp(state.text, "Saved name"));
     assert(sp_document_load(&restored, "/tmp/spirolab-design-good.spiro", &error));
     assert(!error && restored.current.path.count == state.current.path.count);
+    assert(restored.params.second && restored.params.second_outside && restored.drawn_params.second_outside);
+    assert(restored.terms == state.terms && restored.detail == state.detail);
     assert(fabs(restored.progress - .6) < 1e-12);
     assert(restored.layer_count == 1 && restored.mode == 2 && restored.tool == 4);
     assert(!strcmp(restored.text, "Saved name"));
@@ -66,6 +72,20 @@ int main(void) {
     assert(gdk_pixbuf_get_pixels(restored.source)[0] == 0x33);
     assert(gdk_pixbuf_get_pixels(restored.source)[3] == 0x88);
     assert(gdk_pixbuf_get_pixels(restored.prepared)[0] == 0x12);
+    GKeyFile *legacy = g_key_file_new();
+    assert(g_key_file_load_from_file(legacy, "/tmp/spirolab-design-good.spiro", 0, &error));
+    const char *keys[] = {"params", "drawn_params"};
+    for (size_t i = 0; i < G_N_ELEMENTS(keys); i++) {
+        gsize n;
+        double *values = g_key_file_get_double_list(legacy, "Settings", keys[i], &n, &error);
+        assert(values && n == 11);
+        g_key_file_set_double_list(legacy, "Settings", keys[i], values, 10);
+        g_free(values);
+    }
+    assert(g_key_file_save_to_file(legacy, "/tmp/spirolab-design-legacy.spiro", &error));
+    g_key_file_free(legacy);
+    assert(sp_document_load(&restored, "/tmp/spirolab-design-legacy.spiro", &error));
+    assert(!restored.params.second_outside && !restored.drawn_params.second_outside);
     sp_document_free(&state);
     sp_document_free(&restored);
     puts("design roundtrip, separate inks, embedded images and corrupt-load preservation passed");

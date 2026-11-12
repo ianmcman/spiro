@@ -26,7 +26,7 @@ typedef struct {
 
 /*
  * sp_trace_mask:
- *   - Bounded mask <= 512x512 with nonzero ink.
+ *   - Bounded mask <= SP_MAX_DETAIL squared with nonzero ink.
  *   - Thinned via Zhang-Suen algorithm with zero-padding border.
  *   - Ensures small blobs (e.g. 2x2 squares) are preserved if thinned away.
  *   - Walks components into a continuous path using nearest remaining endpoint/point.
@@ -39,7 +39,7 @@ int sp_trace_mask(const unsigned char *mask, int width, int height, SpPath *out)
         return 0;
     *out = (SpPath){0};
 
-    if (!mask || width <= 0 || height <= 0 || width > 512 || height > 512) {
+    if (!mask || width <= 0 || height <= 0 || width > SP_MAX_DETAIL || height > SP_MAX_DETAIL) {
         return 0;
     }
 
@@ -484,7 +484,7 @@ static int term_cmp_desc(const void *a, const void *b) {
 /*
  * sp_fourier:
  *   - Uniformly resamples CLOSED polyline via cumulative length into power-of-two sample count
- * (16..16384).
+ * (16..SP_MAX_TERMS).
  *   - Computes radix-2 FFT.
  *   - Normalizes coefficients by sample_count.
  *   - Assigns signed frequencies: 0, 1..N/2-1, -N/2, -N/2+1..-1.
@@ -499,7 +499,7 @@ int sp_fourier(const SpPath *path, size_t sample_count, SpFourier *out) {
     if (!path || !path->points || path->count < 2) {
         return 0;
     }
-    if (sample_count < 16 || sample_count > 16384 || (sample_count & (sample_count - 1)) != 0) {
+    if (sample_count < 16 || sample_count > SP_MAX_TERMS || (sample_count & (sample_count - 1)) != 0) {
         return 0;
     }
 
@@ -602,14 +602,14 @@ int sp_fourier(const SpPath *path, size_t sample_count, SpFourier *out) {
  * sp_synthesize:
  *   - Sums selected terms for normalized t including exactly closed final sample.
  *   - Clamps requested terms to available terms count.
- *   - Validates terms and samples in range [2, 250000].
+ *   - Validates terms and samples in range [2, SP_MAX_POINTS].
  */
 int sp_synthesize(const SpFourier *f, size_t terms, size_t samples, SpPath *out) {
     if (!out)
         return 0;
     *out = (SpPath){0};
 
-    if (!f || !f->terms || f->count == 0 || terms == 0 || samples < 2 || samples > 250000) {
+    if (!f || !f->terms || f->count == 0 || terms == 0 || samples < 2 || samples > SP_MAX_POINTS) {
         return 0;
     }
 

@@ -35,6 +35,7 @@ typedef struct {
     double cy;
     double scale;
     double line_width_scale;
+    int preview;
 } SpCoordMap;
 
 /* Default constructors */

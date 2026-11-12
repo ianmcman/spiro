@@ -1,0 +1,60 @@
+FFT 65536 terms 18.8 ms
+SYNTH 131073 points 5.3 ms
+DRAW 131073 points solid 69.0 ms
+DRAW 131073 points rainbow 58.8 ms
+TRACE sparse 512 px 0.6 ms
+TEXT 512 px 65536 circles 35.0 ms
+RSS peak 68.1 MiB
+FFT 131072 terms 40.3 ms
+SYNTH 262145 points 11.4 ms
+DRAW 262145 points solid 119.1 ms
+DRAW 262145 points rainbow 96.0 ms
+TRACE sparse 1024 px 2.1 ms
+TEXT 1024 px 131072 circles 69.1 ms
+RSS peak 115.7 MiB
+FFT 262144 terms 83.9 ms
+SYNTH 524289 points 24.6 ms
+DRAW 524289 points solid 219.1 ms
+DRAW 524289 points rainbow 169.0 ms
+TRACE sparse 2048 px 9.8 ms
+TEXT 2048 px 262144 circles 172.7 ms
+RSS peak 215.4 MiB
+FFT 524288 terms 173.9 ms
+SYNTH 1048577 points 54.1 ms
+DRAW 1048577 points solid 384.4 ms
+DRAW 1048577 points rainbow 294.1 ms
+TRACE sparse 4096 px 35.0 ms
+TEXT 4096 px 524288 circles 612.8 ms
+RSS peak 373.9 MiB
+FFT 1048576 terms 365.7 ms
+SYNTH 2097153 points 139.8 ms
+DRAW 2097153 points solid 732.5 ms
+DRAW 2097153 points rainbow 563.8 ms
+TRACE sparse 8192 px 138.9 ms
+TEXT 8192 px 1048576 circles 3268.8 ms
+RSS peak 674.5 MiB
+FFT 2097152 terms 794.0 ms
+SYNTH 4194305 points 298.9 ms
+DRAW 4194305 points solid 1557.3 ms
+DRAW 4194305 points rainbow 1102.9 ms
+TRACE sparse 8192 px 137.0 ms
+TEXT 8192 px 2097152 circles 3859.7 ms
+RSS peak 1239.8 MiB
+
+Subpixel preview at maximum:
+FFT 2097152 terms 830.8 ms
+SYNTH 4194305 points 345.4 ms
+DRAW 4194305 points solid 128.3 ms
+DRAW 4194305 points rainbow 78.5 ms
+TRACE sparse 8192 px 148.5 ms
+TEXT 8192 px 2097152 circles 3947.7 ms
+RSS peak 273.2 MiB
+
+Planar OpenGL prototype comparison:
+GPU NVIDIA GeForce RTX 4070 SUPER/PCIe/SSE2
+131073 points 758x762: Cairo_preview=63.64 ms OpenGL=0.068 ms upload=2.52 ms
+262145 points 758x762: Cairo_preview=110.82 ms OpenGL=0.093 ms upload=2.88 ms
+524289 points 758x762: Cairo_preview=105.39 ms OpenGL=0.141 ms upload=6.49 ms
+1048577 points 758x762: Cairo_preview=104.91 ms OpenGL=0.238 ms upload=14.84 ms
+2097153 points 758x762: Cairo_preview=111.17 ms OpenGL=0.445 ms upload=29.51 ms
+4194305 points 758x762: Cairo_preview=111.42 ms OpenGL=0.862 ms upload=59.94 ms

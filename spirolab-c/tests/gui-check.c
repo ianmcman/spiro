@@ -24,14 +24,15 @@ static gboolean exercise(gpointer data) {
         return G_SOURCE_CONTINUE;
     assert(a->doc.current.path.count > 0 || stage == 3);
     if (stage == 0) {
+        assert(a->doc.drawn_params.second && a->doc.drawn_params.second_outside);
         finish_action(NULL, a);
         capture(a, "/tmp/spirolab-final-gears.png");
         gtk_notebook_set_current_page(GTK_NOTEBOOK(a->notebook), 1);
         gtk_entry_set_text(GTK_ENTRY(a->text), "Ian");
-        gtk_spin_button_set_value(GTK_SPIN_BUTTON(a->terms), 512);
+        gtk_spin_button_set_value(GTK_SPIN_BUTTON(a->terms), 131072);
         draw_action(NULL, a);
     } else if (stage == 1) {
-        assert(a->doc.fourier.count == 512);
+        assert(a->doc.fourier.count == 131072);
         a->playing = FALSE;
         a->doc.progress = .55;
         gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(a->overlay), TRUE);
@@ -79,6 +80,11 @@ int main(int argc, char **argv) {
     build_ui(&a);
     a.last_tick = g_get_monotonic_time();
     a.timer = g_timeout_add(33, tick, &a);
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(a.second), TRUE);
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(a.second_outside), TRUE);
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(a.overlay), TRUE);
+    assert(gtk_adjustment_get_upper(gtk_spin_button_get_adjustment(GTK_SPIN_BUTTON(a.terms))) == SP_MAX_TERMS);
+    assert(gtk_adjustment_get_upper(gtk_spin_button_get_adjustment(GTK_SPIN_BUTTON(a.detail))) == SP_MAX_DETAIL);
     draw_action(NULL, &a);
     g_timeout_add(250, exercise, &a);
     gtk_main();

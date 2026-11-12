@@ -33,14 +33,14 @@ Repeat this step if you move the checkout. The launcher also provides a **3D Spi
 ## Drawing
 
 - Eleven ring and wheel shapes, inside/outside rolling, tooth counts, pen radius and rotation. Polygon corners use the original rolling/fillet geometry. Round gears use exact analytic equations.
-- An additional round wheel, presets and shuffle.
-- Text and picture tracing, with 2–16,384 Fourier circles. High circle counts use inverse FFT synthesis. Trace detail is 32–512 pixels.
+- A second round wheel rolling **inside or outside** the main wheel, with size and orbit-speed controls, plus presets and shuffle. Enable **Second wheel**; check **Second wheel rolls outside** for outside placement.
+- Text and picture tracing, with 2–2,097,152 Fourier circles. High circle counts use inverse FFT synthesis. Trace detail is 32–8192 pixels. Gear curves adapt to complexity up to 4,194,305 points; maximum-circle traces reconstruct to 4,194,305 points.
 - Play/pause, speed, finish, pointer-centred zoom, pan and fit. Up to 32 kept layers, undo and clear.
 - A wheel overlay for round gears and a Fourier overlay showing up to 128 largest circles. The complete drawing uses every selected term.
 - Pen lifts between separate letters, facial features and picture strokes, preserved in layers, saves and exports.
 - Fixed or rainbow ink, with transparency and line width.
 - PNG at 2048 pixels, vector SVG, and A4 PDF. Exports contain the complete design, including kept layers.
-- `.spiro` files preserve layers, actual ink, playback position, settings, Fourier coefficients, and embedded source/prepared pictures. Invalid files leave the current document intact. Saves use an atomic replacement. A file is limited to 128 MiB and two million points.
+- `.spiro` files preserve layers, actual ink, playback position, settings, Fourier coefficients, and embedded source/prepared pictures. Invalid files leave the current document intact. Saves use an atomic replacement. A file is limited to 512 MiB and 8,388,610 total points across the current curve and kept layers.
 
 **Draw** applies the current settings. Presets and Shuffle draw immediately. **Keep layer** freezes the current curve and makes room for another. The shape sliders do not silently replace your drawing as you adjust them.
 
@@ -51,7 +51,7 @@ Repeat this step if you move the checkout. The launcher also provides a **3D Spi
 3. Press **Prepare image**. The preview and status show the result.
 4. Press **Draw** to trace it, or **Save PNG** to keep the processed picture. Removed backgrounds remain transparent in the saved PNG.
 
-Face tools start at 8192 circles and 512-pixel detail; adjust those controls if desired. Preparation and tracing run in the background. Images are processed locally and are never uploaded. Large input pictures are reduced to at most 2048 pixels on their longer side. Change the tool to return to the original picture; processing always starts from that original.
+Face tools start at 8192 circles and 512-pixel detail; adjust those controls if desired. Preparation and tracing run in the background. Images are processed locally and are never uploaded. Large input pictures are reduced to at most 8192 pixels on their longer side. Change the tool to return to the original picture; processing always starts from that original. AI preparation uses at most 4096 pixels; ordinary tracing can use the full 8192-pixel source.
 
 Supply the optional inference models under `models/`: `u2netp.onnx`, `det_500m.onnx`, and `2d106det.onnx`. A full `u2net.onnx` takes precedence if supplied. Model lookup is relative to the executable, so launching from another directory works. Override with `--model-dir DIR` or `SPIROLAB_MODEL_DIR`.
 
@@ -102,6 +102,14 @@ If OpenGL cannot initialize, the viewer falls back to Cairo. For diagnostics, `S
 This display-dependent test reports the actual renderer and redraw timing, verifies that camera changes do not reupload geometry, checks rendered pixels and playback/overlay buffers, and exercises resize and cleanup. `SPIROLAB_GL_FULL_MESH=1` disables the preview reduction when benchmarking a software OpenGL driver.
 
 
+## High-resolution 2D
+
+The limits above were tested on this PC rather than copied from the web version. [Measurements and renderer comparison](docs/2d-pressure-test.md) cover the maximum-size FFT, text tracing, rendering and saved-document roundtrip. Maximum settings can take several seconds to prepare and require large files. Defaults stay modest. The interactive Cairo preview skips subpixel segments and uses coarser rainbow colour grouping at high point counts; saves and exports keep full curve geometry. A separate planar OpenGL benchmark is much faster, but the production 2D canvas still uses Cairo.
+
+```sh
+./tests/high-resolution.sh
+```
+
 ## Controls
 
 | Action | Input |
@@ -148,6 +156,6 @@ For validation we used InsightFace's public [t1.jpg sample](https://github.com/d
 
 ## Port coverage
 
-This is a working native release, not full parity with the web/server application. Still absent: music mode, video/GIF/JPG exports, batch/background render queues, plotter travel optimisation, image-colour matching/splitting, manual gear dragging, browser share links, email and notifications. Face landmarks and subject outlines work; the web version's extra glasses fitting and hair-flow strokes are not ported. Second-wheel controls currently cover the inside configuration. The original web application remains separate.
+This is a working native release, not full parity with the web/server application. Still absent: music mode, video/GIF/JPG exports, batch/background render queues, plotter travel optimisation, image-colour matching/splitting, manual gear dragging, browser share links, email and notifications. Face landmarks and subject outlines work; the web version's extra glasses fitting and hair-flow strokes are not ported. The original web application remains separate.
 
 See [PORTING.md](PORTING.md) for architecture and swarm provenance. Four isolated Antigravity/Gemini workers produced initial drafts. After AGY reported exhausted quota, Codex completed integration and corrections with the user's approval. No further AGY calls were made.

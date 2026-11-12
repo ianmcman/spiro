@@ -4,10 +4,13 @@
 #include <stdint.h>
 #include <stdio.h>
 int main(void) {
+    for (int second = 0; second < 3; second++)
     for (int side = 0; side < 2; side++)
         for (int cap = 0; cap < 2; cap++) {
             SpParams p = sp_defaults();
             p.rotation = 23;
+            p.second = second != 0;
+            p.second_outside = second == 2;
             p.outside = side;
             if (cap) {
                 p.ring_teeth = 100;

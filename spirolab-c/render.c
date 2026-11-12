@@ -215,7 +215,7 @@ static void draw_path_mapped(cairo_t *cr, const SpPoint *points, size_t count,
     cairo_set_line_join(cr, CAIRO_LINE_JOIN_ROUND);
 
     if (ink->color_cycle) {
-        const size_t chunk_size = 16;
+        const size_t chunk_size = map->preview && count > 32768 ? count / 2048 : 16;
         for (size_t i = 0; i < draw_count - 1; i += chunk_size) {
             size_t end = i + chunk_size;
             if (end >= draw_count)
@@ -233,9 +233,14 @@ static void draw_path_mapped(cairo_t *cr, const SpPoint *points, size_t count,
             double sx = map->cx + points[i].x * map->scale;
             double sy = map->cy + points[i].y * map->scale;
             cairo_move_to(cr, sx, sy);
+            double last_x = sx, last_y = sy;
             for (size_t j = i + 1; j <= end; j++) {
                 sx = map->cx + points[j].x * map->scale;
                 sy = map->cy + points[j].y * map->scale;
+                if (map->preview && j < end && (!pen_down || (pen_down[j] && pen_down[j + 1])) &&
+                    (sx - last_x) * (sx - last_x) + (sy - last_y) * (sy - last_y) < .04)
+                    continue;
+                last_x = sx; last_y = sy;
                 if (!pen_down || pen_down[j])
                     cairo_line_to(cr, sx, sy);
                 else
@@ -251,9 +256,14 @@ static void draw_path_mapped(cairo_t *cr, const SpPoint *points, size_t count,
         double sx = map->cx + points[0].x * map->scale;
         double sy = map->cy + points[0].y * map->scale;
         cairo_move_to(cr, sx, sy);
+        double last_x = sx, last_y = sy;
         for (size_t i = 1; i < draw_count; i++) {
             sx = map->cx + points[i].x * map->scale;
             sy = map->cy + points[i].y * map->scale;
+            if (map->preview && i + 1 < draw_count && (!pen_down || (pen_down[i] && pen_down[i + 1])) &&
+                (sx - last_x) * (sx - last_x) + (sy - last_y) * (sy - last_y) < .04)
+                continue;
+            last_x = sx; last_y = sy;
             if (!pen_down || pen_down[i])
                 cairo_line_to(cr, sx, sy);
             else
@@ -280,6 +290,7 @@ void render_scene_cairo(cairo_t *cr, int width, int height, const SpLayer *layer
     map.cx = (double)width / 2.0 + (view ? view->pan_x : 0.0);
     map.cy = (double)height / 2.0 + (view ? view->pan_y : 0.0);
     map.line_width_scale = 1.0;
+    map.preview = 1;
 
     /* Render all kept layers to completion */
     for (size_t i = 0; i < layer_count; i++) {
@@ -310,8 +321,6 @@ void render_wheel_overlay(cairo_t *cr, int width, int height, const SpParams *pa
     double cx = (double)width / 2.0 + (view ? view->pan_x : 0.0);
     double cy = (double)height / 2.0 + (view ? view->pan_y : 0.0);
 
-    if (params->second)
-        return;
     double r = (double)params->wheel_teeth / params->ring_teeth;
     if (!params->outside && r > .97)
         r = .97;
@@ -337,6 +346,20 @@ void render_wheel_overlay(cairo_t *cr, int width, int height, const SpParams *pa
     double wx = center_radius * cos(theta), wy = center_radius * sin(theta);
     double psi = params->outside ? (1 + r) / r * theta + M_PI : -(1 - r) / r * theta;
     double px = wx + params->pen * r * cos(psi), py = wy + params->pen * r * sin(psi);
+    double sx = wx, sy = wy, r2 = 0;
+    if (params->second) {
+        int div = (int)fmax(2, round(1. / params->second_ratio));
+        int ratio = (int)fmax(1, round(params->second_speed));
+        int sign = params->second_outside ? 1 : -1;
+        r2 = r / div;
+        double al = ratio * (params->outside ? -theta : theta) / r;
+        double th = sign * (div + sign) * al;
+        double offset = r + sign * r2;
+        sx = wx + offset * cos(al + psi);
+        sy = wy + offset * sin(al + psi);
+        px = sx + params->pen * r2 * cos(th + psi);
+        py = sy + params->pen * r2 * sin(th + psi);
+    }
     double rot = params->rotation * M_PI / 180, c = cos(rot), sn = sin(rot);
     double wheel_cx = wx * c - wy * sn, wheel_cy = wx * sn + wy * c;
     double pen_x = px * c - py * sn, pen_y = px * sn + py * c;
@@ -358,6 +381,21 @@ void render_wheel_overlay(cairo_t *cr, int width, int height, const SpParams *pa
     cairo_new_path(cr);
     cairo_arc(cr, scr_wcx, scr_wcy, r_norm * scale, 0.0, 2.0 * M_PI);
     cairo_stroke(cr);
+
+    if (params->second) {
+        double second_x = cx + (sx * c - sy * sn) * scale;
+        double second_y = cy + (sx * sn + sy * c) * scale;
+        cairo_set_source_rgba(cr, .4, 1., .65, .65);
+        cairo_new_path(cr);
+        cairo_arc(cr, second_x, second_y, r2 * scale, 0, 2 * M_PI);
+        cairo_stroke(cr);
+        cairo_set_dash(cr, NULL, 0, 0);
+        cairo_move_to(cr, scr_wcx, scr_wcy);
+        cairo_line_to(cr, second_x, second_y);
+        cairo_stroke(cr);
+        scr_wcx = second_x;
+        scr_wcy = second_y;
+    }
 
     /* Solid arm and pen */
     cairo_set_dash(cr, NULL, 0, 0.0);
@@ -443,6 +481,7 @@ static void setup_export_coord_map(SpCoordMap *map, double target_w, double targ
     map->scale = (min_dim * 0.88) / span;
     map->cx = target_w / 2.0 - mid_x * map->scale;
     map->cy = target_h / 2.0 - mid_y * map->scale;
+    map->preview = 0;
     map->line_width_scale = min_dim / 800.0;
     if (map->line_width_scale < 1.0)
         map->line_width_scale = 1.0;

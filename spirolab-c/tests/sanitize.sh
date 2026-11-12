@@ -4,7 +4,7 @@ cd -- "$(dirname -- "$0")/.."
 check_dir=$(mktemp -d /tmp/spirolab-sanitizers.XXXXXX)
 trap 'rm -rf -- "$check_dir"' EXIT
 flags=(-O1 -g -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer)
-for name in engine-check trace-check geometry-accuracy trace-roundtrip; do
+for name in engine-check trace-check geometry-accuracy trace-roundtrip two-wheel-check; do
  cc "${flags[@]}" -I. "tests/$name.c" engine.c trace.c -lm -o "$check_dir/$name"
  "$check_dir/$name"
 done

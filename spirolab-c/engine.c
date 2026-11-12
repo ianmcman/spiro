@@ -713,8 +713,8 @@ int sp_generate(const SpParams *p, size_t max_samples, SpPath *out) {
         return 0;
     if (max_samples < 2)
         return 0;
-    if (max_samples > 250000)
-        max_samples = 250000;
+    if (max_samples > SP_MAX_POINTS)
+        max_samples = SP_MAX_POINTS;
 
     if (p->ring_shape < 0 || p->ring_shape > 10)
         return 0;
@@ -728,7 +728,7 @@ int sp_generate(const SpParams *p, size_t max_samples, SpPath *out) {
         return 0;
     if (!isfinite(p->rotation))
         return 0;
-    if (p->second != 0 && p->second != 1)
+    if ((p->second_outside != 0 && p->second_outside != 1) || (p->second != 0 && p->second != 1))
         return 0;
     if (!isfinite(p->second_ratio) || !isfinite(p->second_speed))
         return 0;
@@ -760,13 +760,13 @@ int sp_generate(const SpParams *p, size_t max_samples, SpPath *out) {
             div = (int)round(1.0 / p->second_ratio);
             if (div < 2)
                 div = 2;
-            double r2 = wheelR * p->second_ratio;
+            double r2 = wheelR / div;
             ratio = (int)round(p->second_speed);
             if (ratio < 1)
                 ratio = 1;
-            w2n = div - 1;
-            sgn = -1;
-            c2 = wheelR - r2;
+            w2n = p->second_outside ? div + 1 : div - 1;
+            sgn = p->second_outside ? 1 : -1;
+            c2 = wheelR + sgn * r2;
             d2 = p->pen * r2;
         }
 
@@ -881,7 +881,7 @@ int sp_generate(const SpParams *p, size_t max_samples, SpPath *out) {
     int ratio = (w2on ? (int)round(p->second_speed) : 0);
     if (ratio < 1 && w2on)
         ratio = 1;
-    int w2n = (w2on ? div - 1 : 0);
+    int w2n = (w2on ? (p->second_outside ? div + 1 : div - 1) : 0);
     double fw = FAST_WEIGHT * (w2on ? 1.0 + (double)ratio * (1.0 + (double)w2n) : 1.0);
     if (fw > 1.0)
         fw = 1.0;
@@ -921,13 +921,13 @@ int sp_generate(const SpParams *p, size_t max_samples, SpPath *out) {
     W2 w2;
     memset(&w2, 0, sizeof(w2));
     if (w2on) {
-        double r2 = wheelR * p->second_ratio;
+        double r2 = wheelR / div;
         w2.on = 1;
         w2.r2 = r2;
         w2.n = w2n;
         w2.ratio = ratio;
-        w2.sgn = -1;
-        w2.c = wheelR - r2;
+        w2.sgn = p->second_outside ? 1 : -1;
+        w2.c = wheelR + w2.sgn * r2;
         w2.d = p->pen * r2;
         w2.a = 0.0;
     }

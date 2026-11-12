@@ -6,7 +6,7 @@ trap 'rm -rf -- "$check_dir"' EXIT
 read -r -a compile_flags <<< "${CHECK_CFLAGS:--O2 -g -std=c11 -Wall -Wextra -Werror}"
 read -r -a cairo_flags <<< "$(pkg-config --cflags --libs cairo cairo-svg cairo-pdf)"
 read -r -a image_flags <<< "$(pkg-config --cflags --libs gdk-pixbuf-2.0 cairo cairo-svg cairo-pdf)"
-for test_name in engine-check trace-check geometry-accuracy trace-roundtrip; do
+for test_name in engine-check trace-check geometry-accuracy trace-roundtrip two-wheel-check; do
  cc "${compile_flags[@]}" -I. "tests/$test_name.c" engine.c trace.c -lm -o "$check_dir/$test_name"
  "$check_dir/$test_name"
 done

@@ -2,8 +2,8 @@
 #include <glib/gstdio.h>
 #include <math.h>
 #include <string.h>
-#define FILE_LIMIT (128u * 1024u * 1024u)
-#define TOTAL_POINTS 2000000u
+#define FILE_LIMIT (512u * 1024u * 1024u)
+#define TOTAL_POINTS (SP_MAX_POINTS * 2u)
 #define DOC_ERROR (g_quark_from_static_string("spirolab-document"))
 void sp_document_init(SpDocument *d) {
     memset(d, 0, sizeof *d);
@@ -32,7 +32,7 @@ void sp_document_free(SpDocument *d) {
 }
 static void set_params(GKeyFile *k, const char *key, const SpParams *p) {
     double v[] = {p->ring_shape, p->wheel_shape, p->ring_teeth, p->wheel_teeth,  p->outside,
-                  p->pen,        p->rotation,    p->second,     p->second_ratio, p->second_speed};
+                  p->pen,        p->rotation,    p->second,     p->second_ratio, p->second_speed, p->second_outside};
     g_key_file_set_double_list(k, "Settings", key, v, G_N_ELEMENTS(v));
 }
 static gboolean get_params(GKeyFile *k, const char *key, SpParams *p, GError **e) {
@@ -40,7 +40,7 @@ static gboolean get_params(GKeyFile *k, const char *key, SpParams *p, GError **e
     double *v = g_key_file_get_double_list(k, "Settings", key, &n, e);
     if (!v)
         return FALSE;
-    gboolean ok = n == 10;
+    gboolean ok = n == 10 || n == 11;
     for (gsize i = 0; i < n; i++)
         if (!isfinite(v[i]))
             ok = FALSE;
@@ -52,10 +52,11 @@ static gboolean get_params(GKeyFile *k, const char *key, SpParams *p, GError **e
         ok = ok && v[0] >= 0 && v[0] <= 10 && v[1] >= 0 && v[1] <= 10 && v[2] >= 1 &&
              v[2] <= 1000 && v[3] >= 1 && v[3] <= 1000 && v[4] >= 0 && v[4] <= 1 && v[5] >= 0 &&
              v[5] <= 1.5 && fabs(v[6]) <= 1e9 && v[7] >= 0 && v[7] <= 1 && v[8] >= 1. / 12 &&
-             v[8] <= .5 && v[9] >= 1 && v[9] <= 12;
+             v[8] <= .5 && v[9] >= 1 && v[9] <= 12 &&
+             (n == 10 || v[10] == 0 || v[10] == 1);
         if (ok)
             *p = (SpParams){(int)v[0], (int)v[1], (int)v[2], (int)v[3], (int)v[4],
-                            v[5],      v[6],      (int)v[7], v[8],      v[9]};
+                            v[5],      v[6],      (int)v[7], v[8],      v[9], n == 11 ? (int)v[10] : 0};
     }
     g_free(v);
     return ok;
@@ -108,7 +109,7 @@ static gboolean set_layer(GKeyFile *k, const char *g, const SpLayer *l) {
 }
 static gboolean get_layer(GKeyFile *k, const char *g, SpLayer *l, size_t *total, GError **e) {
     int n = g_key_file_get_integer(k, g, "count", e);
-    if (*e || n < 0 || n > 250000 || *total + (size_t)n > TOTAL_POINTS)
+    if (*e || n < 0 || n > (int)SP_MAX_POINTS || *total + (size_t)n > TOTAL_POINTS)
         return FALSE;
     *total += (size_t)n;
     l->visible = g_key_file_get_boolean(k, g, "visible", e);
@@ -177,7 +178,7 @@ static gboolean set_image(GKeyFile *k, const char *key, GdkPixbuf *p, GError **e
 }
 static void check_image_size(GdkPixbufLoader *l, int w, int h, gpointer p) {
     gboolean *bad = p;
-    if (w < 1 || h < 1 || w > 2048 || h > 2048) {
+    if (w < 1 || h < 1 || w > SP_MAX_DETAIL || h > SP_MAX_DETAIL) {
         *bad = TRUE;
         gdk_pixbuf_loader_set_size(l, 1, 1);
     }
@@ -191,7 +192,7 @@ static gboolean get_image(GKeyFile *k, const char *key, GdkPixbuf **out, GError 
     gsize n = 0;
     guchar *data = g_base64_decode(b64, &n);
     g_free(b64);
-    if (!n || n > 24u * 1024u * 1024u) {
+    if (!n || n > 300u * 1024u * 1024u) {
         g_free(data);
         return FALSE;
     }
@@ -236,7 +237,7 @@ static gboolean get_fourier(GKeyFile *k, SpFourier *f, GError **error) {
     if (!g_key_file_has_group(k, "Fourier"))
         return TRUE;
     int count = g_key_file_get_integer(k, "Fourier", "count", error);
-    if (*error || count < 0 || count > 16384)
+    if (*error || count < 0 || count > (int)SP_MAX_TERMS)
         return FALSE;
     if (!count)
         return TRUE;
@@ -246,7 +247,7 @@ static gboolean get_fourier(GKeyFile *k, SpFourier *f, GError **error) {
         return FALSE;
     gboolean valid = n == (gsize)count * 3;
     for (gsize i = 0; i < n; i++)
-        if (!isfinite(v[i]) || fabs(v[i]) > (i % 3 == 2 ? 16384 : 1000))
+        if (!isfinite(v[i]) || fabs(v[i]) > (i % 3 == 2 ? SP_MAX_TERMS : 1000))
             valid = FALSE;
     if (valid)
         for (int i = 0; i < count; i++)
@@ -341,8 +342,8 @@ gboolean sp_document_load(SpDocument *d, const char *file, GError **error) {
         goto done;
     READ_INT(mode, "mode", 0, 2);
     READ_INT(drawn_mode, "drawn_mode", 0, 2);
-    READ_INT(terms, "terms", 2, 16384);
-    READ_INT(detail, "detail", 32, 512);
+    READ_INT(terms, "terms", 2, SP_MAX_TERMS);
+    READ_INT(detail, "detail", 32, SP_MAX_DETAIL);
     READ_INT(tool, "tool", 0, 4);
     if (!get_params(k, "params", &t.params, &e) ||
         !get_params(k, "drawn_params", &t.drawn_params, &e) ||

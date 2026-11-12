@@ -137,7 +137,7 @@ void sp3_curve_free(Sp3Curve *c) {
     }
 }
 int sp3_lift(const SpPath *path, Sp3Config *out) {
-    if (!out || !path || path->count < 3 || path->count > 250000)
+    if (!out || !path || path->count < 3 || path->count > SP_MAX_POINTS)
         return 0;
     SpFourier f = {0};
     if (!sp_fourier(path, 4096, &f))

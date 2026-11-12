@@ -10,7 +10,7 @@
 typedef struct {
     SpDocument doc;
     GtkWidget *window, *sidebar, *actions, *canvas, *status, *progress, *notebook, *play;
-    GtkWidget *shape[2], *teeth[2], *outside, *pen, *rotation, *second, *second_options, *ratio,
+    GtkWidget *shape[2], *teeth[2], *outside, *pen, *rotation, *second, *second_options, *second_outside, *ratio,
         *second_speed;
     GtkWidget *text, *terms, *harmonics, *detail, *threshold, *tool, *preview, *image_name, *color,
         *rainbow, *width, *speed, *overlay;
@@ -80,6 +80,7 @@ static void collect(App *a) {
     d->params.rotation = gtk_range_get_value(GTK_RANGE(a->rotation));
     d->params.second =
         d->params.wheel_shape == 0 && gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(a->second));
+    d->params.second_outside = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(a->second_outside));
     d->params.second_ratio = gtk_range_get_value(GTK_RANGE(a->ratio));
     d->params.second_speed = gtk_range_get_value(GTK_RANGE(a->second_speed));
     g_free(d->text);
@@ -150,6 +151,7 @@ static void sync_controls(App *a) {
     gtk_range_set_value(GTK_RANGE(a->pen), d->params.pen);
     gtk_range_set_value(GTK_RANGE(a->rotation), d->params.rotation);
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(a->second), d->params.second);
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(a->second_outside), d->params.second_outside);
     gtk_range_set_value(GTK_RANGE(a->ratio), d->params.second_ratio);
     gtk_range_set_value(GTK_RANGE(a->second_speed), d->params.second_speed);
     gtk_entry_set_text(GTK_ENTRY(a->text), d->text);
@@ -282,8 +284,8 @@ static GdkPixbuf *load_picture(const char *file, GError **e) {
         g_set_error(e, G_FILE_ERROR, G_FILE_ERROR_FAILED, "Unsupported or damaged image");
         return NULL;
     }
-    if (MAX(w, h) > 2048)
-        return gdk_pixbuf_new_from_file_at_scale(file, 2048, 2048, TRUE, e);
+    if (MAX(w, h) > SP_MAX_DETAIL)
+        return gdk_pixbuf_new_from_file_at_scale(file, SP_MAX_DETAIL, SP_MAX_DETAIL, TRUE, e);
     return gdk_pixbuf_new_from_file(file, e);
 }
 static char *choose(App *a, const char *title, gboolean save, const char *suggest) {
@@ -358,12 +360,20 @@ static gpointer work(gpointer data) {
     if (j->prepare) {
         SpAi *ai = sp_ai_new(j->model_dir, &j->error);
         if (ai) {
-            j->result_image =
-                sp_ai_apply(ai, j->image, (SpAiMode)(j->tool - 1), &j->faces, &j->error);
+            int W = gdk_pixbuf_get_width(j->image), H = gdk_pixbuf_get_height(j->image);
+            double scale = MIN(1., 4096. / MAX(W, H));
+            GdkPixbuf *input = scale < 1 ? gdk_pixbuf_scale_simple(j->image,
+                MAX(1, (int)round(W * scale)), MAX(1, (int)round(H * scale)), GDK_INTERP_BILINEAR)
+                : g_object_ref(j->image);
+            if (input) {
+                j->result_image = sp_ai_apply(ai, input, (SpAiMode)(j->tool - 1), &j->faces, &j->error);
+                g_object_unref(input);
+            } else
+                g_set_error(&j->error, G_FILE_ERROR, G_FILE_ERROR_NOMEM, "Cannot resize inference input");
             sp_ai_free(ai);
         }
     } else if (j->mode == 0) {
-        if (!sp_generate(&j->params, 24000, &j->path))
+        if (!sp_generate(&j->params, SP_MAX_POINTS, &j->path))
             g_set_error(&j->error, G_FILE_ERROR, G_FILE_ERROR_FAILED,
                         "The gear settings cannot produce a valid curve");
     } else
@@ -618,6 +628,7 @@ static void shuffle_action(GtkWidget *w, gpointer data) {
     a->doc.params.outside = g_random_int_range(0, 2);
     a->doc.params.rotation = g_random_double_range(0, 360);
     a->doc.params.second = a->doc.params.wheel_shape == 0 && g_random_int_range(0, 5) == 0;
+    a->doc.params.second_outside = g_random_int_range(0, 2);
     sync_controls(a);
     draw_action(NULL, a);
 }
@@ -825,6 +836,7 @@ static void build_ui(App *a) {
     a->second = check(g, "Second wheel");
     a->second_options = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
     gtk_box_pack_start(GTK_BOX(g), a->second_options, FALSE, FALSE, 0);
+    a->second_outside = check(a->second_options, "Second wheel rolls outside");
     a->ratio = scale(a->second_options, "Second wheel / main wheel", 1. / 12, .5, 1. / 120, .25);
     a->second_speed = scale(a->second_options, "Orbit speed", 1, 12, 1, 2);
     g_signal_connect(a->shape[1], "changed", G_CALLBACK(second_changed), a);
@@ -853,11 +865,11 @@ static void build_ui(App *a) {
     button(pr, "Save PNG…", G_CALLBACK(save_picture), a);
     a->preview = gtk_image_new();
     gtk_box_pack_start(GTK_BOX(p), a->preview, FALSE, FALSE, 0);
-    a->detail = spin(p, "Trace detail · pixels", 32, 512, 384);
+    a->detail = spin(p, "Trace detail · pixels", 32, SP_MAX_DETAIL, 384);
     a->threshold = scale(p, "Edge threshold", .01, 1, .01, .15);
     a->harmonics = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
     gtk_box_pack_start(GTK_BOX(a->sidebar), a->harmonics, FALSE, FALSE, 0);
-    a->terms = spin(a->harmonics, "Circles", 2, 16384, 256);
+    a->terms = spin(a->harmonics, "Circles", 2, SP_MAX_TERMS, 256);
     a->overlay = check(a->sidebar, "Show drawing wheels");
     gtk_widget_set_tooltip_text(a->overlay, "Round gears, or up to 128 largest Fourier circles. "
                                             "The drawing uses all selected circles.");
@@ -951,10 +963,10 @@ int main(int argc, char **argv) {
             g_free(models);
             models = g_strdup(argv[++i]);
         } else if (!strcmp(argv[i], "--terms") && i + 1 < argc) {
-            if (!integer(argv[++i], 2, 16384, &terms))
+            if (!integer(argv[++i], 2, SP_MAX_TERMS, &terms))
                 goto bad;
         } else if (!strcmp(argv[i], "--detail") && i + 1 < argc) {
-            if (!integer(argv[++i], 32, 512, &detail))
+            if (!integer(argv[++i], 32, SP_MAX_DETAIL, &detail))
                 goto bad;
         } else if (!strcmp(argv[i], "--ink"))
             ink = TRUE;
